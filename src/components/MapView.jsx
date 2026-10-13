@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { useToast } from "../context/ToastContext";
 
 // In modern Vite, point maplibregl directly to its web worker bundle URL to prevent Worker loading error
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
@@ -12,6 +13,31 @@ function getCoordinate(val) {
   return isNaN(num) ? null : num;
 }
 
+function getDmiValue(row) {
+  const candidates = [
+    "STATION",
+    "Station",
+    "station",
+    "DMI",
+    "Dmi",
+    "dmi",
+    "Distance",
+    "DISTANCE",
+    "dist",
+    "StationID",
+    "stationid",
+  ];
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      const num = typeof row[key] === "number" ? row[key] : parseFloat(row[key]);
+      if (!isNaN(num)) {
+        return Math.round(num);
+      }
+    }
+  }
+  return null;
+}
+
 const COLOR_OPTIONS = [
   { label: "Cyan", value: "#06b6d4" },
   { label: "Amber", value: "#f59e0b" },
@@ -21,14 +47,83 @@ const COLOR_OPTIONS = [
   { label: "Black", value: "#111827" },
 ];
 
-export default function MapView({ rows = [], selectedVariant = "A" }) {
+const DEFLECTION_RE = /^D(\d+)$/;
+
+// Sensor Color Map matching Profile tab
+const SENSOR_COLORS = {
+  D1: "#2563eb", // Blue
+  D2: "#7c3aed", // Purple
+  D3: "#059669", // Emerald
+  D4: "#d97706", // Amber
+  D5: "#dc2626", // Red
+  D6: "#4f46e5", // Indigo
+  D7: "#0891b2", // Cyan
+  D8: "#ea580c", // Orange
+  D9: "#0284c7", // Sky
+};
+
+export default function MapView({
+  rows = [],
+  columns = [],
+  sectionName = "",
+  selectedVariant = "A",
+}) {
   const mapContainer = useRef(null);
   const map = useRef(null);
-  const markersRef = useRef([]); // Store DOM markers
+  const markersRef = useRef([]); // Store DOM markers with inner dot reference
+  const chartContainerRef = useRef(null);
+  const svgRef = useRef(null);
+  const { show } = useToast() || {};
+
   const [bearing, setBearing] = useState(0);
+  const [currentZoom, setCurrentZoom] = useState(15);
   const [mapType, setMapType] = useState("satellite"); // "satellite" | "streets"
-  const [dotColor, setDotColor] = useState("#06b6d4");
-  const [dotRadius, setDotRadius] = useState(7);
+  const [dotColor, setDotColor] = useState("#ef4444");
+  const [dotRadius, setDotRadius] = useState(6);
+
+  // Synchronized Profile View States
+  const [showProfile, setShowProfile] = useState(true);
+  const [selectedSensor, setSelectedSensor] = useState("D1");
+  const [showAverageLine, setShowAverageLine] = useState(true);
+  const [showLegend, setShowLegend] = useState(true);
+  const [hoveredStationId, setHoveredStationId] = useState(null);
+  const [activeStationId, setActiveStationId] = useState(null);
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [chartWidth, setChartWidth] = useState(1200);
+
+  // Dynamic wide-format chart measurement via ResizeObserver
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          setChartWidth(Math.floor(entry.contentRect.width));
+        }
+      }
+    });
+    ro.observe(chartContainerRef.current);
+    return () => ro.disconnect();
+  }, [showProfile]);
+
+  // Extract deflection columns sorted numerically: D1, D2, D3...
+  const deflectionCols = useMemo(() => {
+    let list = columns.filter((c) => DEFLECTION_RE.test(c));
+    if (list.length === 0 && rows.length > 0) {
+      list = Object.keys(rows[0]).filter((k) => DEFLECTION_RE.test(k));
+    }
+    if (list.length === 0) list = ["D1"];
+    return list.sort((a, b) => {
+      const numA = parseInt(a.replace("D", ""), 10);
+      const numB = parseInt(b.replace("D", ""), 10);
+      return numA - numB;
+    });
+  }, [columns, rows]);
+
+  // Derive effective active sensor safely
+  const activeSensor = useMemo(() => {
+    if (deflectionCols.includes(selectedSensor)) return selectedSensor;
+    return deflectionCols[0] ?? "D1";
+  }, [deflectionCols, selectedSensor]);
 
   // Extract valid points [lng, lat]
   const validPoints = useMemo(() => {
@@ -37,10 +132,13 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
         const lat = getCoordinate(r.Latitude ?? r.latitude ?? r.LAT ?? r.Lat);
         const lng = getCoordinate(r.Longitude ?? r.longitude ?? r.LON ?? r.Long ?? r.Lng);
         if (lat !== null && lng !== null && lat !== 0 && lng !== 0) {
+          const dmi = getDmiValue(r);
           return {
             ...r,
             lat,
             lng,
+            dmi: dmi ?? idx + 1,
+            stationId: r.StationID ?? idx + 1,
             index: idx + 1,
           };
         }
@@ -77,6 +175,147 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
       polylineCoords: coords,
     };
   }, [validPoints]);
+
+  // Extract profile points sorted by DMI ascending (matching ProfileView)
+  const profilePoints = useMemo(() => {
+    if (validPoints.length === 0) return [];
+    const pts = validPoints
+      .map((pt, idx) => {
+        const val = pt[activeSensor];
+        const numVal = typeof val === "number" ? val : parseFloat(val);
+        if (isNaN(numVal)) return null;
+        return {
+          originalIdx: idx,
+          stationId: pt.stationId,
+          dmi: pt.dmi,
+          val: numVal,
+          lat: pt.lat,
+          lng: pt.lng,
+          row: pt,
+        };
+      })
+      .filter(Boolean);
+
+    pts.sort((a, b) => a.dmi - b.dmi);
+    return pts;
+  }, [validPoints, activeSensor]);
+
+  // Compute profile statistics (matching ProfileView)
+  const stats = useMemo(() => {
+    if (profilePoints.length === 0) return null;
+    const values = profilePoints.map((p) => p.val);
+    const mean = values.reduce((s, x) => s + x, 0) / values.length;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const variance =
+      values.length > 1
+        ? values.reduce((s, x) => s + (x - mean) ** 2, 0) / (values.length - 1)
+        : 0;
+    const std = Math.sqrt(variance);
+
+    const minDmi = profilePoints[0].dmi;
+    const maxDmi = profilePoints[profilePoints.length - 1].dmi;
+    const totalDistance = maxDmi - minDmi;
+
+    return {
+      count: profilePoints.length,
+      mean,
+      std,
+      min,
+      max,
+      minDmi,
+      maxDmi,
+      totalDistance,
+    };
+  }, [profilePoints]);
+
+  // Chart dimensions for wide format
+  const chartHeight = 220;
+  const padding = { top: 22, right: 35, bottom: 44, left: 68 };
+  const plotWidth = Math.max(100, chartWidth - padding.left - padding.right);
+  const plotHeight = Math.max(50, chartHeight - padding.top - padding.bottom);
+
+  // Compute Scales matching ProfileView
+  const scales = useMemo(() => {
+    if (!stats || profilePoints.length === 0) return null;
+
+    const maxYVal = Math.max(stats.max, showAverageLine ? stats.mean : 0);
+    const yMax = Math.max(maxYVal * 1.15, 1);
+    const roundedYMax = Math.ceil(yMax);
+
+    const minDmi = stats.minDmi;
+    const maxDmi = stats.maxDmi === minDmi ? minDmi + 100 : stats.maxDmi;
+    const dmiRange = maxDmi - minDmi;
+
+    const getX = (dmi) => padding.left + ((dmi - minDmi) / dmiRange) * plotWidth;
+    const getY = (val) => padding.top + plotHeight - (val / roundedYMax) * plotHeight;
+
+    const mappedPoints = profilePoints.map((p) => ({
+      ...p,
+      x: getX(p.dmi),
+      y: getY(p.val),
+    }));
+
+    const linePath = mappedPoints.reduce((acc, p, i) => {
+      return i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
+    }, "");
+
+    function getNiceStep(range, targetIntervals = 10) {
+      if (range <= 0) return 100;
+      const roughStep = range / targetIntervals;
+      const power = Math.pow(10, Math.floor(Math.log10(roughStep)));
+      const fraction = roughStep / power;
+
+      let niceFraction = 1;
+      if (fraction < 1.5) niceFraction = 1;
+      else if (fraction < 2.25) niceFraction = 2;
+      else if (fraction < 3.5) niceFraction = 2.5;
+      else if (fraction < 7.5) niceFraction = 5;
+      else niceFraction = 10;
+
+      return Math.max(1, Math.round(niceFraction * power));
+    }
+
+    // Adapt number of tick intervals to wide plot width (approx one every 100-120px)
+    const intervals = Math.max(6, Math.min(16, Math.floor(plotWidth / 110)));
+    const step = getNiceStep(dmiRange, intervals);
+    const xTicks = [];
+    const startTick = Math.floor(minDmi / step) * step;
+    for (let d = startTick; d <= maxDmi; d += step) {
+      if (d >= minDmi) {
+        xTicks.push({
+          val: d,
+          x: getX(d),
+        });
+      }
+    }
+    const lastTick = xTicks[xTicks.length - 1];
+    if (lastTick && maxDmi - lastTick.val > step * 0.45) {
+      xTicks.push({ val: maxDmi, x: getX(maxDmi) });
+    }
+
+    const averageY = getY(stats.mean);
+
+    return {
+      roundedYMax,
+      getX,
+      getY,
+      mappedPoints,
+      linePath,
+      xTicks,
+      averageY,
+    };
+  }, [stats, profilePoints, showAverageLine, plotWidth, plotHeight]);
+
+  // Re-fit canvas when split screen opens or closes
+  useEffect(() => {
+    if (map.current) {
+      const timer = setTimeout(() => {
+        map.current?.resize();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [showProfile]);
 
   // Initialize Map
   useEffect(() => {
@@ -141,12 +380,21 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
       touchPitch: false,
     });
 
+    // Reduce zoom sensitivity by ~4x for high-precision alignment with the profile chart
+    mapInstance.scrollZoom.setWheelZoomRate(1 / 1800);
+    mapInstance.scrollZoom.setZoomRate(1 / 350);
+
     mapInstance.on("rotate", () => {
       setBearing(Math.round(mapInstance.getBearing()));
     });
 
+    mapInstance.on("zoom", () => {
+      setCurrentZoom(Number(mapInstance.getZoom().toFixed(2)));
+    });
+
     // Fit bounds immediately on load
     mapInstance.on("load", () => {
+      setCurrentZoom(Number(mapInstance.getZoom().toFixed(2)));
       if (bounds) {
         mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 0 });
       }
@@ -177,25 +425,48 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
       }
     });
 
-    // Create reliable DOM HTML Markers for all survey stations
-    // (DOM markers never fail if WebGL worker is slow or re-syncing)
+    // Create reliable DOM HTML Markers with inner child dot element
+    // Crucial: MapLibre translates the outer wrapper element. We NEVER touch outer transform!
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
     validPoints.forEach((pt) => {
       const el = document.createElement("div");
-      el.className = "station-map-dot";
+      el.className = "station-marker-wrapper";
       el.style.width = `${dotRadius * 2}px`;
       el.style.height = `${dotRadius * 2}px`;
-      el.style.backgroundColor = dotColor;
-      el.style.border = `2px solid ${isSat ? "#ffffff" : "#111827"}`;
-      el.style.borderRadius = "50%";
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.style.justifyContent = "center";
       el.style.cursor = "pointer";
-      el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.4)";
+
+      // Inner dot element that safely transforms without displacing the marker
+      const dot = document.createElement("div");
+      dot.className = "station-marker-dot";
+      dot.style.width = "100%";
+      dot.style.height = "100%";
+      dot.style.backgroundColor = dotColor;
+      dot.style.border = `2px solid ${isSat ? "#ffffff" : "#111827"}`;
+      dot.style.borderRadius = "50%";
+      dot.style.boxShadow = "0 1px 4px rgba(0,0,0,0.4)";
+      dot.style.transition = "transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease";
+      el.appendChild(dot);
+
       el.title = `Station ${pt.StationID}`;
 
+      // Bi-directional link: hovering/clicking marker updates chart
+      el.addEventListener("mouseenter", () => {
+        setHoveredStationId(pt.StationID);
+      });
+      el.addEventListener("mouseleave", () => {
+        setHoveredStationId(null);
+      });
+      el.addEventListener("click", () => {
+        setActiveStationId(pt.StationID);
+      });
+
       const popup = new maplibregl.Popup({ offset: dotRadius + 4 }).setHTML(`
-        <div style="font-family: inherit; font-size: 12px; line-height: 1.5; min-width: 150px; color: #111827;">
+        <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.5; min-width: 150px; color: #111827;">
           <div style="font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-bottom: 4px;">
             Station ${pt.StationID}
           </div>
@@ -212,6 +483,8 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
         .setPopup(popup)
         .addTo(mapInstance);
 
+      marker._stationId = pt.StationID;
+      marker._dot = dot;
       markersRef.current.push(marker);
     });
 
@@ -254,29 +527,36 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
         isSat ? "#ffffff" : "#111827"
       );
     }
-
-    // Update marker borders
-    markersRef.current.forEach((marker) => {
-      const el = marker.getElement();
-      if (el) {
-        el.style.borderColor = isSat ? "#ffffff" : "#111827";
-      }
-    });
   }, [mapType]);
 
-  // Update marker color and radius in real-time
+  // Synchronized visual highlighting of map markers on hover or selection
+  // Scales only the inner dot element so coordinates NEVER jump!
   useEffect(() => {
     const isSat = mapType === "satellite";
     markersRef.current.forEach((marker) => {
+      const dot = marker._dot;
       const el = marker.getElement();
-      if (el) {
-        el.style.backgroundColor = dotColor;
+      if (!dot || !el) return;
+      const isHovered = marker._stationId === hoveredStationId;
+      const isActive = marker._stationId === activeStationId;
+
+      if (isHovered || isActive) {
+        dot.style.transform = "scale(1.3)";
+        dot.style.boxShadow = "0 0 0 2px #2563eb, 0 2px 6px rgba(0,0,0,0.4)";
+        dot.style.backgroundColor = "#2563eb";
+        dot.style.borderColor = "#ffffff";
+        el.style.zIndex = "1000";
+      } else {
+        dot.style.transform = "scale(1)";
+        dot.style.boxShadow = "0 1px 4px rgba(0,0,0,0.4)";
+        dot.style.backgroundColor = dotColor;
+        dot.style.borderColor = isSat ? "#ffffff" : "#111827";
         el.style.width = `${dotRadius * 2}px`;
         el.style.height = `${dotRadius * 2}px`;
-        el.style.borderColor = isSat ? "#ffffff" : "#111827";
+        el.style.zIndex = "1";
       }
     });
-  }, [dotColor, dotRadius, mapType]);
+  }, [hoveredStationId, activeStationId, dotColor, dotRadius, mapType]);
 
   // Rotation controls
   const handleRotateLeft = () => {
@@ -302,6 +582,134 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
     }
   };
 
+  // Fine zoom controls for pixel-precise road-to-chart alignment
+  const handleZoomInFine = () => {
+    if (!map.current) return;
+    map.current.easeTo({ zoom: map.current.getZoom() + 0.15, duration: 150 });
+  };
+
+  const handleZoomOutFine = () => {
+    if (!map.current) return;
+    map.current.easeTo({ zoom: map.current.getZoom() - 0.15, duration: 150 });
+  };
+
+  // SVG Export Canvas helper (high-resolution 2x PNG)
+  const exportChartAsCanvas = () => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return null;
+
+    const clone = svgEl.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(chartWidth));
+    clone.setAttribute("height", String(chartHeight));
+
+    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bgRect.setAttribute("width", "100%");
+    bgRect.setAttribute("height", "100%");
+    bgRect.setAttribute("fill", "#ffffff");
+    clone.insertBefore(bgRect, clone.firstChild);
+
+    const svgString = new XMLSerializer().serializeToString(clone);
+    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = 2; // 2x high-res
+        const canvas = document.createElement("canvas");
+        canvas.width = chartWidth * scale;
+        canvas.height = chartHeight * scale;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      };
+      img.onerror = (e) => {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+      img.src = url;
+    });
+  };
+
+  const handleCopyChart = async () => {
+    try {
+      const canvas = await exportChartAsCanvas();
+      if (!canvas) return;
+
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          show?.("Failed to generate chart image", "error");
+          return;
+        }
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          show?.("Deflection Profile copied to clipboard!", "success");
+        } catch (err) {
+          console.error("Clipboard copy error:", err);
+          show?.("Could not copy chart to clipboard", "error");
+        }
+      });
+    } catch (err) {
+      console.error("Export error:", err);
+      show?.("Export failed", "error");
+    }
+  };
+
+  const handleDownloadChart = async () => {
+    try {
+      const canvas = await exportChartAsCanvas();
+      if (!canvas) return;
+
+      const dataUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `Deflection_Profile_${activeSensor}_Drop_${selectedVariant}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      show?.("Chart downloaded!", "success");
+    } catch (err) {
+      console.error("Download error:", err);
+      show?.("Download failed", "error");
+    }
+  };
+
+  // Wide-format interactive scrubbing handler
+  const handleChartMouseMove = (e) => {
+    if (!svgRef.current || !scales || scales.mappedPoints.length === 0) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+
+    let closest = scales.mappedPoints[0];
+    let minDist = Math.abs(scales.mappedPoints[0].x - mouseX);
+    for (let i = 1; i < scales.mappedPoints.length; i++) {
+      const dist = Math.abs(scales.mappedPoints[i].x - mouseX);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = scales.mappedPoints[i];
+      }
+    }
+    setHoveredPoint(closest);
+    setHoveredStationId(closest.stationId);
+  };
+
+  const handleChartClick = () => {
+    if (activeHoverPoint && map.current) {
+      map.current.easeTo({ center: [activeHoverPoint.lng, activeHoverPoint.lat], duration: 350 });
+      setActiveStationId(activeHoverPoint.stationId);
+      const marker = markersRef.current.find((m) => m._stationId === activeHoverPoint.stationId);
+      if (marker) {
+        marker.togglePopup();
+      }
+    }
+  };
+
   if (validPoints.length === 0) {
     return (
       <div className="empty-state">
@@ -318,22 +726,47 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
   const isSat = mapType === "satellite";
   const normalizedBearing = ((bearing % 360) + 360) % 360;
 
+  // Active hover point derived from either chart hover or map hover
+  const activeHoverPoint =
+    hoveredPoint ||
+    (hoveredStationId && scales
+      ? scales.mappedPoints.find((p) => p.stationId === hoveredStationId)
+      : null);
+
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", width: "100%", position: "relative" }}>
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        width: "100%",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       {/* Top Map Toolbar */}
       <div className="map-toolbar">
-        {/* Left: Section tag & count */}
-        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+        {/* Left: Section tag, count, and Deflection Profile Toggle */}
+        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", flexWrap: "wrap" }}>
           <span className="badge badge-dark">Drop {selectedVariant}</span>
           <span style={{ fontSize: 13, fontWeight: 500 }}>
             {validPoints.length.toLocaleString()} locations
           </span>
+          <button
+            type="button"
+            className={`btn btn-sm ${showProfile ? "btn-primary" : "btn-secondary"}`}
+            onClick={() => setShowProfile((v) => !v)}
+            title={showProfile ? "Hide Synchronized Deflection Profile" : "Show Synchronized Deflection Profile"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
+          >
+            <span>📈</span> {showProfile ? "Hide Profile" : "Deflection Profile"}
+          </button>
         </div>
 
-        {/* Center: Dot Style Controls (Color & Size) */}
+        {/* Center: Dot Style Controls */}
         <div className="map-tool-group">
           <span className="map-tool-label">Marker:</span>
-          {/* Color swatches */}
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             {COLOR_OPTIONS.map((c) => (
               <button
@@ -377,9 +810,43 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
           </span>
         </div>
 
-        {/* Right: Rotation + Map Type toggles */}
+        {/* Right: Fine Zoom + Rotation + Map Type toggles */}
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          {/* Rotate Controls */}
+          {/* Fine Zoom Controls for Road-to-Chart Alignment */}
+          <div className="rotation-control-group" title="Fine Zoom adjustment for chart alignment">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleZoomOutFine}
+              title="Zoom Out (Fine: -0.15)"
+              style={{ padding: "2px 8px", fontWeight: "bold", fontSize: 13, lineHeight: 1 }}
+            >
+              −
+            </button>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--text-secondary)",
+                minWidth: 36,
+                textAlign: "center",
+                userSelect: "none",
+              }}
+              title="Current Zoom Level"
+            >
+              {currentZoom.toFixed(1)}z
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleZoomInFine}
+              title="Zoom In (Fine: +0.15)"
+              style={{ padding: "2px 8px", fontWeight: "bold", fontSize: 13, lineHeight: 1 }}
+            >
+              +
+            </button>
+          </div>
+
           <div className="rotation-control-group">
             <button
               type="button"
@@ -451,7 +918,6 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
             )}
           </div>
 
-          {/* Satellite vs Streets toggle */}
           <div style={{ display: "flex", gap: 2 }}>
             <button
               type="button"
@@ -471,44 +937,567 @@ export default function MapView({ rows = [], selectedVariant = "A" }) {
         </div>
       </div>
 
-      {/* Full Viewport Canvas */}
-      <div style={{ flex: 1, width: "100%", height: "100%", position: "relative" }}>
-        {/* Floating Interactive Cardinal Compass Rose */}
+      {/* Main Split-Screen Container */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {/* Top/Upper: Interactive Map Canvas */}
         <div
-          className="map-compass"
-          onClick={handleResetRotation}
-          title="Click to reset to North"
+          style={{
+            flex: showProfile ? "1 1 54%" : "1 1 100%",
+            minHeight: 220,
+            width: "100%",
+            position: "relative",
+            overflow: "hidden",
+          }}
         >
-          <div
-            className="compass-rose"
-            style={{ transform: `rotate(${-normalizedBearing}deg)` }}
-          >
-            <div className="compass-pointer north">
-              <span className="compass-letter">N</span>
-            </div>
-            <div className="compass-pointer south">
-              <span className="compass-letter">S</span>
-            </div>
-            <div className="compass-pointer east">
-              <span className="compass-letter">E</span>
-            </div>
-            <div className="compass-pointer west">
-              <span className="compass-letter">W</span>
-            </div>
-            <div className="compass-center-dot" />
-          </div>
-          {normalizedBearing !== 0 && (
-            <div className="compass-reset-hint">
-              ↺ Reset
+          {/* Synchronized Hover HUD Callout Pill over Map */}
+          {activeHoverPoint && (
+            <div
+              style={{
+                position: "absolute",
+                top: 10,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 10,
+                background: "rgba(17, 24, 39, 0.92)",
+                color: "#ffffff",
+                padding: "4px 12px",
+                borderRadius: "var(--r-md)",
+                fontSize: 11.5,
+                fontWeight: 600,
+                letterSpacing: "0.2px",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                backdropFilter: "blur(4px)",
+              }}
+            >
+              <span>Station {activeHoverPoint.stationId}</span>
+              <span style={{ color: "#6b7280" }}>•</span>
+              <span>DMI: {activeHoverPoint.dmi.toLocaleString()} ft</span>
+              <span style={{ color: "#6b7280" }}>•</span>
+              <span style={{ color: "#38bdf8" }}>
+                {activeSensor}: {activeHoverPoint.val.toFixed(2)} mils
+              </span>
             </div>
           )}
+
+          {/* Floating Interactive Cardinal Compass Rose */}
+          <div
+            className="map-compass"
+            onClick={handleResetRotation}
+            title="Click to reset to North"
+          >
+            <div
+              className="compass-rose"
+              style={{ transform: `rotate(${-normalizedBearing}deg)` }}
+            >
+              <div className="compass-pointer north">
+                <span className="compass-letter">N</span>
+              </div>
+              <div className="compass-pointer south">
+                <span className="compass-letter">S</span>
+              </div>
+              <div className="compass-pointer east">
+                <span className="compass-letter">E</span>
+              </div>
+              <div className="compass-pointer west">
+                <span className="compass-letter">W</span>
+              </div>
+              <div className="compass-center-dot" />
+            </div>
+            {normalizedBearing !== 0 && (
+              <div className="compass-reset-hint">
+                ↺ Reset
+              </div>
+            )}
+          </div>
+
+          {/* Map Canvas */}
+          <div
+            ref={mapContainer}
+            style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
+          />
         </div>
 
-        {/* Native WebGL Map Canvas Container */}
-        <div
-          ref={mapContainer}
-          style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
-        />
+        {/* Bottom/Lower: Wide-Format Synchronized Deflection Profile matching ProfileView */}
+        {showProfile && (
+          <div
+            style={{
+              flex: "0 0 280px",
+              height: 280,
+              minHeight: 250,
+              borderTop: "1px solid var(--border-subtle)",
+              background: "#ffffff",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              boxShadow: "0 -2px 10px rgba(0,0,0,0.06)",
+              zIndex: 5,
+            }}
+          >
+            {/* Header & Controls Bar matching ProfileView */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "6px 14px",
+                background: "#f9fafb",
+                borderBottom: "1px solid var(--border-subtle)",
+                flexWrap: "wrap",
+                gap: "var(--sp-2)",
+              }}
+            >
+              {/* Left: Sensor Selector Pills + Average Toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)" }}>
+                    Sensor{sectionName ? ` (${sectionName})` : ""}:
+                  </span>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {deflectionCols.map((col) => {
+                      const isActive = col === activeSensor;
+                      const colColor = SENSOR_COLORS[col] || "#2563eb";
+                      return (
+                        <button
+                          key={col}
+                          type="button"
+                          onClick={() => setSelectedSensor(col)}
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: "var(--r-sm)",
+                            fontSize: 12,
+                            fontWeight: isActive ? 700 : 500,
+                            cursor: "pointer",
+                            border: `1.5px solid ${isActive ? colColor : "var(--border-subtle)"}`,
+                            background: isActive ? colColor : "#ffffff",
+                            color: isActive ? "#ffffff" : "var(--text-primary)",
+                            transition: "all var(--t-fast)",
+                          }}
+                        >
+                          {col}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Average Line Toggle (Black Dotted) */}
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showAverageLine}
+                    onChange={(e) => setShowAverageLine(e.target.checked)}
+                    style={{ accentColor: "#111827", cursor: "pointer" }}
+                  />
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 12, height: 2, borderBottom: "2px dotted #111827", display: "inline-block" }} />
+                    Average
+                  </span>
+                </label>
+
+                {/* Legend Toggle Checkbox */}
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showLegend}
+                    onChange={(e) => setShowLegend(e.target.checked)}
+                    style={{ accentColor: "#111827", cursor: "pointer" }}
+                  />
+                  <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    Legend
+                  </span>
+                </label>
+
+                {/* Section Stats Summary Badge */}
+                {stats && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-secondary)",
+                      background: "var(--bg-secondary)",
+                      padding: "2px 8px",
+                      borderRadius: "var(--r-sm)",
+                    }}
+                  >
+                    Mean: <strong style={{ color: "#111827" }}>{stats.mean.toFixed(2)} mils</strong> | Min: {stats.min.toFixed(2)} | Max: {stats.max.toFixed(2)} mils
+                  </span>
+                )}
+              </div>
+
+              {/* Right: Copy + Download + Close */}
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleCopyChart}
+                  title="Copy profile chart image to clipboard"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px" }}
+                >
+                  <span>📋</span> Copy
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleDownloadChart}
+                  title="Download profile chart as high-resolution PNG"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px" }}
+                >
+                  <span>⬇</span> Download
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowProfile(false)}
+                  title="Close Deflection Profile"
+                  style={{ padding: "2px 7px", fontSize: 12, lineHeight: 1 }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Wide Full-Width SVG Area */}
+            <div
+              ref={chartContainerRef}
+              style={{
+                flex: 1,
+                width: "100%",
+                padding: "4px 12px 6px",
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#ffffff",
+                cursor: "crosshair",
+              }}
+            >
+              {scales ? (() => {
+                const legendItems = [];
+                legendItems.push({
+                  id: "profile",
+                  label: "Deflection Profile",
+                  type: "solid-black",
+                });
+                if (showAverageLine && stats) {
+                  legendItems.push({
+                    id: "average",
+                    label: `Average: ${stats.mean.toFixed(2)} mils`,
+                    type: "dotted-black",
+                  });
+                }
+
+                const legendWidth = 195;
+                const legendHeight = 12 + legendItems.length * 18;
+                const legendX = padding.left + plotWidth - legendWidth - 10;
+                const legendY = padding.top + 8;
+
+                return (
+                  <svg
+                    ref={svgRef}
+                    viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                    style={{ width: "100%", height: "100%", overflow: "visible", background: "#ffffff" }}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseLeave={() => {
+                      setHoveredPoint(null);
+                      setHoveredStationId(null);
+                    }}
+                    onClick={handleChartClick}
+                  >
+                    {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
+                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+                      const y = padding.top + pct * plotHeight;
+                      const val = ((1 - pct) * scales.roundedYMax).toFixed(1);
+                      return (
+                        <g key={pct}>
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={padding.left + plotWidth}
+                            y2={y}
+                            stroke="#e5e7eb"
+                            strokeWidth="1"
+                          />
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={padding.left + 6}
+                            y2={y}
+                            stroke="#111827"
+                            strokeWidth="1.5"
+                          />
+                          <text
+                            x={padding.left - 8}
+                            y={y + 4}
+                            textAnchor="end"
+                            fontSize="13"
+                            fill="#111827"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            {val}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Major Vertical Grid Lines & X-axis Inner Ticks (DMI in ft) */}
+                    {scales.xTicks.map((tick) => (
+                      <g key={`x-tick-${tick.val}`}>
+                        <line
+                          x1={tick.x}
+                          y1={padding.top}
+                          x2={tick.x}
+                          y2={padding.top + plotHeight}
+                          stroke="#e5e7eb"
+                          strokeWidth="1"
+                        />
+                        <line
+                          x1={tick.x}
+                          y1={padding.top + plotHeight}
+                          x2={tick.x}
+                          y2={padding.top + plotHeight - 6}
+                          stroke="#111827"
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x={tick.x}
+                          y={padding.top + plotHeight + 18}
+                          textAnchor="middle"
+                          fontSize="13"
+                          fill="#111827"
+                          fontFamily="Arial, sans-serif"
+                        >
+                          {tick.val}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* Average Reference Line (Clean Black Dotted Line) */}
+                    {showAverageLine && stats && (
+                      <line
+                        x1={padding.left}
+                        y1={scales.averageY}
+                        x2={padding.left + plotWidth}
+                        y2={scales.averageY}
+                        stroke="#111827"
+                        strokeWidth="1.8"
+                        strokeDasharray="3 3"
+                      />
+                    )}
+
+                    {/* Deflection Profile Curve Path (Solid Black Line) */}
+                    <path
+                      d={scales.linePath}
+                      fill="none"
+                      stroke="#111827"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Station Data Point Circles (Solid Black Dots) */}
+                    {scales.mappedPoints.map((pt) => {
+                      const isHovered =
+                        activeHoverPoint?.originalIdx === pt.originalIdx ||
+                        hoveredStationId === pt.stationId;
+                      return (
+                        <g
+                          key={`pt-${pt.originalIdx}`}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={isHovered ? "4.5" : "3.5"}
+                            fill={isHovered ? "#ffffff" : "#111827"}
+                            stroke={isHovered ? "#2563eb" : "#111827"}
+                            strokeWidth={isHovered ? "2" : "1"}
+                          />
+                        </g>
+                      );
+                    })}
+
+                    {/* 4-sided Inner Box Border in Solid Black */}
+                    <rect
+                      x={padding.left}
+                      y={padding.top}
+                      width={plotWidth}
+                      height={plotHeight}
+                      fill="none"
+                      stroke="#111827"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Top-Right Legend Box with Solid Black Border */}
+                    {showLegend && legendItems.length > 0 && (
+                      <g transform={`translate(${legendX}, ${legendY})`}>
+                        <rect
+                          x="0"
+                          y="0"
+                          width={legendWidth}
+                          height={legendHeight}
+                          fill="rgba(255, 255, 255, 0.95)"
+                          stroke="#111827"
+                          strokeWidth="1.5"
+                          rx="3"
+                        />
+                        {legendItems.map((item, idx) => {
+                          const itemY = 14 + idx * 18;
+                          return (
+                            <g key={item.id}>
+                              {item.type === "solid-black" && (
+                                <>
+                                  <line x1="10" y1={itemY} x2="30" y2={itemY} stroke="#111827" strokeWidth="2.5" />
+                                  <circle cx="20" cy={itemY} r="3" fill="#111827" stroke="#ffffff" strokeWidth="1" />
+                                </>
+                              )}
+                              {item.type === "dotted-black" && (
+                                <line x1="10" y1={itemY} x2="30" y2={itemY} stroke="#111827" strokeWidth="2" strokeDasharray="3 3" />
+                              )}
+                              <text
+                                x="38"
+                                y={itemY + 4}
+                                fontSize="11"
+                                fontFamily="Arial, sans-serif"
+                                fill="#111827"
+                                fontWeight="600"
+                              >
+                                {item.label}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    )}
+
+                    {/* Interactive Tooltip Card matching ProfileView */}
+                    {activeHoverPoint && (
+                      <g pointerEvents="none">
+                        {/* Vertical Drop Line connecting to X-axis */}
+                        <line
+                          x1={activeHoverPoint.x}
+                          y1={padding.top}
+                          x2={activeHoverPoint.x}
+                          y2={padding.top + plotHeight}
+                          stroke="#9ca3af"
+                          strokeWidth="1"
+                          strokeDasharray="3 3"
+                        />
+                        {/* Highlighted active circle */}
+                        <circle
+                          cx={activeHoverPoint.x}
+                          cy={activeHoverPoint.y}
+                          r="5"
+                          fill="#ffffff"
+                          stroke="#2563eb"
+                          strokeWidth="2"
+                        />
+                        {/* Tooltip Card with intelligent clearance */}
+                        {(() => {
+                          const tooltipWidth = 130;
+                          const tooltipHeight = 52;
+                          const gap = 16;
+                          // If placing above would collide with top border, flip below the point
+                          const placeBelow = activeHoverPoint.y - tooltipHeight - gap < padding.top;
+                          const tooltipX = Math.max(
+                            padding.left + 5,
+                            Math.min(padding.left + plotWidth - tooltipWidth - 5, activeHoverPoint.x - tooltipWidth / 2)
+                          );
+                          const tooltipY = placeBelow
+                            ? activeHoverPoint.y + gap
+                            : activeHoverPoint.y - tooltipHeight - gap;
+
+                          return (
+                            <g transform={`translate(${tooltipX}, ${tooltipY})`}>
+                              <rect
+                                x="0"
+                                y="0"
+                                width={tooltipWidth}
+                                height={tooltipHeight}
+                                rx="4"
+                                fill="#111827"
+                                opacity="0.95"
+                              />
+                              <text x="8" y="16" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                Station: <tspan fill="#ffffff" fontWeight="bold">{activeHoverPoint.stationId}</tspan>
+                              </text>
+                              <text x="8" y="31" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                DMI: <tspan fill="#ffffff" fontWeight="bold">{activeHoverPoint.dmi.toLocaleString()} ft</tspan>
+                              </text>
+                              <text x="8" y="46" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                {activeSensor}: <tspan fill="#38bdf8" fontWeight="bold">{activeHoverPoint.val.toFixed(2)} mils</tspan>
+                              </text>
+                            </g>
+                          );
+                        })()}
+                      </g>
+                    )}
+
+                    {/* Axis Titles in Arial Bold matching ProfileView */}
+                    <text
+                      x={padding.left - 44}
+                      y={padding.top + plotHeight / 2}
+                      textAnchor="middle"
+                      fontSize="14"
+                      fontWeight="bold"
+                      fill="#111827"
+                      fontFamily="Arial, sans-serif"
+                      transform={`rotate(-90 ${padding.left - 44} ${padding.top + plotHeight / 2})`}
+                    >
+                      Deflection (mils)
+                    </text>
+                    <text
+                      x={padding.left + plotWidth / 2}
+                      y={chartHeight - 6}
+                      textAnchor="middle"
+                      fontSize="14"
+                      fontWeight="bold"
+                      fill="#111827"
+                      fontFamily="Arial, sans-serif"
+                    >
+                      DMI (ft)
+                    </text>
+                  </svg>
+                );
+              })() : (
+                <div className="empty-state">
+                  <div className="empty-state-icon">📈</div>
+                  <h3>No profile data</h3>
+                  <p>Could not extract station DMI distance values from this section.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

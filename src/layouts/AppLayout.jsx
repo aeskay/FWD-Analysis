@@ -9,6 +9,7 @@ export default function AppLayout() {
   const { user } = useAuth();
   const { show } = useToast();
   const [activeSection, setActiveSection] = useState(null);
+  const [activeTab, setActiveTab] = useState("data");
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleSignOut = async () => {
@@ -30,7 +31,6 @@ export default function AppLayout() {
         <div className="header-logo">
           <div className="header-logo-icon">📡</div>
           <span>FWD Analysis</span>
-          <span className="badge badge-amber">Beta</span>
         </div>
 
         <div className="header-right">
@@ -60,8 +60,11 @@ export default function AppLayout() {
       <main className="app-main">
         {activeSection ? (
           <SectionView
+            key={activeSection.id}
             project={activeSection.project}
             section={activeSection}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
             onSectionUpdated={() => setRefreshKey((k) => k + 1)}
           />
         ) : (

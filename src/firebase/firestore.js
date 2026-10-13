@@ -120,12 +120,30 @@ export const getSectionData = async (uid, projectId, sectionId) => {
     sectionId
   );
   const sectionSnap = await getDoc(sectionRef);
-  if (!sectionSnap.exists()) return { rows: [], columns: [] };
+  if (!sectionSnap.exists()) return { rows: [], columns: [], excludedStations: [] };
 
-  const { columns } = sectionSnap.data();
+  const { columns, excludedStations = [] } = sectionSnap.data();
   const chunksRef = collection(sectionRef, "chunks");
   const chunksSnap = await getDocs(query(chunksRef, orderBy("index", "asc")));
 
   const rows = chunksSnap.docs.flatMap((d) => d.data().rows);
-  return { rows, columns };
+  return { rows, columns, excludedStations };
+};
+
+export const updateSectionExcludedStations = async (
+  uid,
+  projectId,
+  sectionId,
+  excludedStations
+) => {
+  const sectionRef = doc(
+    db,
+    "users",
+    uid,
+    "projects",
+    projectId,
+    "sections",
+    sectionId
+  );
+  await setDoc(sectionRef, { excludedStations }, { merge: true });
 };
