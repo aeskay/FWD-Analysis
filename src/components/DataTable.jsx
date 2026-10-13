@@ -1,0 +1,253 @@
+import React, { useState, useMemo } from "react";
+import { exportToExcel } from "../utils/excelExport";
+
+const PAGE_SIZE = 100;
+
+// Columns that get special styling
+const COL_CLASS = {
+  StationID: "col-stationid",
+  DropID: "col-dropid",
+  Force: "col-force",
+  Stress: "col-force",
+};
+const DEFLECTION_RE = /^D\d+$/;
+
+function formatCell(col, val) {
+  if (val === null || val === undefined) return "—";
+  if (val instanceof Date) {
+    return val.toLocaleString("en-US", {
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  if (typeof val === "number") {
+    if (DEFLECTION_RE.test(col)) return val.toFixed(2);
+    if (col === "Force" || col === "Stress") return val.toFixed(0);
+    if (col === "Latitude" || col === "Longitude") return val.toFixed(6);
+    return Number.isInteger(val) ? val : val.toFixed(3);
+  }
+  return String(val);
+}
+
+export default function DataTable({
+  columns,
+  rows,
+  sectionName,
+  availableVariants = [],
+  selectedVariant = "A",
+  onSelectVariant,
+  normalizedData = null,
+}) {
+  const [page, setPage] = useState(1);
+  const [sortCol, setSortCol] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+
+  const sorted = useMemo(() => {
+    if (!sortCol) return rows;
+    return [...rows].sort((a, b) => {
+      const av = a[sortCol] ?? "";
+      const bv = b[sortCol] ?? "";
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, sortCol, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const pageRows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
+
+  const handleExport = () => {
+    exportToExcel(columns, rows, sectionName ?? "fwd_masterfile", normalizedData);
+  };
+
+  const sortIcon = (col) => {
+    if (sortCol !== col) return <span className="sort-icon">⇅</span>;
+    return <span className="sort-icon">{sortDir === "asc" ? "↑" : "↓"}</span>;
+  };
+
+  // Count rows in the currently selected variant
+  const selectedCount = useMemo(() => {
+    return rows.filter((r) => r._variantLetter === selectedVariant).length;
+  }, [rows, selectedVariant]);
+
+  return (
+    <div className="data-tab">
+      {/* Top Station Selection Bar */}
+      {availableVariants.length > 0 && (
+        <div className="station-selector-bar">
+          <div className="station-selector-label">
+            <span>Drop:</span>
+          </div>
+          <div className="station-selector-pills">
+            {availableVariants.map((letter) => {
+              const isSelected = selectedVariant === letter;
+              const count = rows.filter((r) => r._variantLetter === letter).length;
+              return (
+                <button
+                  key={letter}
+                  type="button"
+                  className={`variant-pill ${isSelected ? "active" : ""}`}
+                  onClick={() => onSelectVariant && onSelectVariant(letter)}
+                >
+                  <span className="variant-pill-indicator">
+                    {isSelected ? "●" : "○"}
+                  </span>
+                  <span className="variant-pill-name">Drop {letter}</span>
+                  <span className="variant-pill-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="station-selector-info">
+            <span className="badge badge-dark">
+              {selectedCount.toLocaleString()} stations
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "var(--sp-3) var(--sp-6)",
+          borderBottom: "1px solid var(--border-subtle)",
+          flexShrink: 0,
+          gap: "var(--sp-4)",
+        }}
+      >
+        <div className="stats-row" style={{ padding: 0, border: 0, margin: 0, display: "flex", gap: "var(--sp-3)" }}>
+          <div className="stat-chip">
+            <span className="stat-value">{rows.length.toLocaleString()}</span>
+            <span className="stat-label">total drops</span>
+          </div>
+          <div className="stat-chip">
+            <span className="stat-value">{columns.length}</span>
+            <span className="stat-label">columns</span>
+          </div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={handleExport}>
+          ⬇ Export to Excel
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th style={{ width: 60, textAlign: "center" }}>Variant</th>
+              {columns.map((col) => (
+                <th
+                  key={col}
+                  className={sortCol === col ? "sort-active" : ""}
+                  onClick={() => handleSort(col)}
+                >
+                  {col}
+                  {sortIcon(col)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row, i) => {
+              const isChosen = row._variantLetter === selectedVariant;
+              return (
+                <tr
+                  key={i}
+                  style={
+                    isChosen
+                      ? { backgroundColor: "rgba(17, 24, 39, 0.04)" }
+                      : { opacity: 0.75 }
+                  }
+                >
+                  <td style={{ textAlign: "center", fontWeight: 700 }}>
+                    <span
+                      className={`badge ${
+                        isChosen ? "badge-dark" : "badge-gray"
+                      }`}
+                      style={{ fontSize: 10, padding: "2px 6px" }}
+                    >
+                      {row._variantLetter ?? "—"}
+                    </span>
+                  </td>
+                  {columns.map((col) => {
+                    const cls =
+                      COL_CLASS[col] ||
+                      (DEFLECTION_RE.test(col)
+                        ? "col-deflection"
+                        : col === "DateTime"
+                        ? "col-datetime"
+                        : "");
+                    return (
+                      <td key={col} className={cls}>
+                        {formatCell(col, row[col])}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="table-pagination">
+        <span className="pagination-info">
+          Rows {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–
+          {Math.min(page * PAGE_SIZE, sorted.length).toLocaleString()} of{" "}
+          {sorted.length.toLocaleString()}
+        </span>
+        <div className="pagination-controls">
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={page === 1}
+            onClick={() => setPage(1)}
+          >
+            «
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={page === 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            ‹ Prev
+          </button>
+          <span className="text-secondary">
+            Page {page} / {totalPages}
+          </span>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={page === totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next ›
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={page === totalPages}
+            onClick={() => setPage(totalPages)}
+          >
+            »
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
