@@ -6,6 +6,7 @@ import {
   getDoc,
   getDocs,
   deleteDoc,
+  updateDoc,
   onSnapshot,
   query,
   orderBy,
@@ -53,6 +54,13 @@ export const createSection = async (uid, projectId, name) => {
 export const deleteSection = async (uid, projectId, sectionId) => {
   return deleteDoc(
     doc(db, "users", uid, "projects", projectId, "sections", sectionId)
+  );
+};
+
+export const updateSectionName = async (uid, projectId, sectionId, name) => {
+  return updateDoc(
+    doc(db, "users", uid, "projects", projectId, "sections", sectionId),
+    { name }
   );
 };
 

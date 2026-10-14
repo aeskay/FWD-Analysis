@@ -5,6 +5,7 @@ import {
   createSection,
   deleteProject,
   deleteSection,
+  updateSectionName,
 } from "../firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -20,6 +21,8 @@ export default function Sidebar({ activeSection, onSelectSection }) {
   const [showNewProject, setShowNewProject] = useState(false);
   const [importTarget, setImportTarget] = useState(null); // projectId
   const [ctx, setCtx] = useState(null); // context menu state
+  const [editingSection, setEditingSection] = useState(null); // { id, projectId, name }
+  const [editName, setEditName] = useState("");
   const ctxRef = useRef();
 
   useEffect(() => {
@@ -61,18 +64,39 @@ export default function Sidebar({ activeSection, onSelectSection }) {
     setCtx(null);
     try {
       if (action === "delete-project" && type === "project") {
-        await deleteProject(user.uid, payload.id);
-        show("Project deleted", "info");
-        if (activeSection?.projectId === payload.id) onSelectSection(null);
+        if (window.confirm(`Are you sure you want to delete project "${payload.name}" and all its sections?`)) {
+          await deleteProject(user.uid, payload.id);
+          show("Project deleted", "info");
+          if (activeSection?.projectId === payload.id) onSelectSection(null);
+        }
       } else if (action === "delete-section" && type === "section") {
-        await deleteSection(user.uid, payload.projectId, payload.id);
-        show("Section deleted", "info");
-        if (activeSection?.id === payload.id) onSelectSection(null);
+        if (window.confirm(`Are you sure you want to delete section "${payload.name}"?`)) {
+          await deleteSection(user.uid, payload.projectId, payload.id);
+          show("Section deleted", "info");
+          if (activeSection?.id === payload.id) onSelectSection(null);
+        }
+      } else if (action === "rename-section" && type === "section") {
+        setEditingSection(payload);
+        setEditName(payload.name);
       } else if (action === "import" && type === "project") {
         setImportTarget(payload.id);
       }
     } catch (err) {
       show("Operation failed: " + err.message, "error");
+    }
+  };
+
+  const handleSaveRename = async () => {
+    if (!editingSection || !editName.trim()) return;
+    try {
+      await updateSectionName(user.uid, editingSection.projectId, editingSection.id, editName.trim());
+      show("Section renamed", "success");
+      if (activeSection?.id === editingSection.id) {
+        onSelectSection({ ...activeSection, name: editName.trim() });
+      }
+      setEditingSection(null);
+    } catch (err) {
+      show("Failed to rename: " + err.message, "error");
     }
   };
 
@@ -146,11 +170,48 @@ export default function Sidebar({ activeSection, onSelectSection }) {
                       onContextMenu={(e) => showCtx(e, "section", { ...sec, projectId: project.id })}
                     >
                       <div className="section-dot" />
-                      <span className="section-name truncate" title={sec.name}>{sec.name}</span>
-                      {sec.rowCount > 0 && (
-                        <span className="badge badge-gray text-sm">
-                          {sec.rowCount.toLocaleString()}
-                        </span>
+                      {editingSection?.id === sec.id ? (
+                        <input
+                          type="text"
+                          className="input input-sm"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveRename();
+                            if (e.key === "Escape") setEditingSection(null);
+                          }}
+                          onBlur={handleSaveRename}
+                          autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            padding: "2px 6px",
+                            fontSize: 12,
+                            height: 24,
+                            width: "100%",
+                          }}
+                        />
+                      ) : (
+                        <>
+                          <span className="section-name truncate" title={sec.name}>{sec.name}</span>
+                          {sec.rowCount > 0 && (
+                            <span className="badge badge-gray text-sm">
+                              {sec.rowCount.toLocaleString()}
+                            </span>
+                          )}
+                          <div className="section-actions" style={{ display: "flex", gap: 2 }}>
+                            <button
+                              className="btn btn-ghost btn-icon btn-sm"
+                              title="Section options"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                showCtx(e, "section", { ...sec, projectId: project.id });
+                              }}
+                              style={{ padding: "2px 4px", fontSize: 11 }}
+                            >
+                              ⋯
+                            </button>
+                          </div>
+                        </>
                       )}
                     </div>
                   ))}
@@ -204,9 +265,14 @@ export default function Sidebar({ activeSection, onSelectSection }) {
             </>
           )}
           {ctx.type === "section" && (
-            <div className="ctx-item danger" onClick={() => handleCtxAction("delete-section")}>
-              🗑 Delete Section
-            </div>
+            <>
+              <div className="ctx-item" onClick={() => handleCtxAction("rename-section")}>
+                ✏️ Rename Section
+              </div>
+              <div className="ctx-item danger" onClick={() => handleCtxAction("delete-section")}>
+                🗑 Delete Section
+              </div>
+            </>
           )}
         </div>
       )}

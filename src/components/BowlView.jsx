@@ -301,8 +301,14 @@ export default function BowlView({
 
     const clone = svgEl.cloneNode(true);
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    clone.setAttribute("width", String(chartWidth));
-    clone.setAttribute("height", String(chartHeight));
+
+    // Get true viewBox dimensions or fallback
+    const vb = svgEl.viewBox?.baseVal;
+    const actualWidth = vb && vb.width > 0 ? vb.width : (svgEl.clientWidth || chartWidth);
+    const actualHeight = vb && vb.height > 0 ? vb.height : (svgEl.clientHeight || chartHeight);
+
+    clone.setAttribute("width", String(actualWidth));
+    clone.setAttribute("height", String(actualHeight));
 
     // Ensure white background inside SVG clone so exported image is opaque
     const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -318,12 +324,14 @@ export default function BowlView({
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const scale = 2; // 2x high-DPI resolution
+        const scale = 3; // 3x ultra-sharp resolution (no blurriness)
         const canvas = document.createElement("canvas");
-        canvas.width = chartWidth * scale;
-        canvas.height = chartHeight * scale;
+        canvas.width = Math.round(actualWidth * scale);
+        canvas.height = Math.round(actualHeight * scale);
         const ctx = canvas.getContext("2d");
         if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
           ctx.fillStyle = "#ffffff";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -650,6 +658,8 @@ export default function BowlView({
                   ref={selectedSvgRef}
                   viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                   style={{ width: "100%", height: "auto", overflow: "visible", background: "#ffffff" }}
+                  shapeRendering="crispEdges"
+                  textRendering="geometricPrecision"
                 >
                   {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
                   {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
@@ -670,7 +680,7 @@ export default function BowlView({
                           y1={y}
                           x2={padding.left + 6}
                           y2={y}
-                          stroke="#111827"
+                          stroke="#000000"
                           strokeWidth="1.5"
                         />
                         <text
@@ -678,8 +688,9 @@ export default function BowlView({
                           y={y + 5}
                           textAnchor="end"
                           fontSize="14"
-                          fill="#111827"
+                          fill="#000000"
                           fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
                         >
                           {val}
                         </text>
@@ -703,7 +714,7 @@ export default function BowlView({
                         y1={padding.top + plotHeight}
                         x2={pt.x}
                         y2={padding.top + plotHeight - 6}
-                        stroke="#111827"
+                        stroke="#000000"
                         strokeWidth="1.5"
                       />
                       <text
@@ -712,8 +723,9 @@ export default function BowlView({
                         textAnchor="middle"
                         fontSize="14"
                         fontWeight="normal"
-                        fill="#111827"
+                        fill="#000000"
                         fontFamily="Arial, sans-serif"
+                        shapeRendering="auto"
                       >
                         {pt.sensor}
                       </text>
@@ -721,16 +733,17 @@ export default function BowlView({
                   ))}
 
                   {/* Shaded deformation bowl area */}
-                  <path d={areaD} fill="rgba(17, 24, 39, 0.05)" />
+                  <path d={areaD} fill="rgba(0, 0, 0, 0.05)" shapeRendering="auto" />
 
                   {/* Bowl Curve Path */}
                   <path
                     d={pathD}
                     fill="none"
-                    stroke="#111827"
+                    stroke="#000000"
                     strokeWidth="2.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    shapeRendering="auto"
                   />
 
                   {/* Sensor Data Points & Data Labels */}
@@ -755,9 +768,10 @@ export default function BowlView({
                           cx={pt.x}
                           cy={pt.y}
                           r="5"
-                          fill="#111827"
+                          fill="#000000"
                           stroke="#ffffff"
                           strokeWidth="2"
+                          shapeRendering="auto"
                         />
                         <text
                           x={labelX}
@@ -765,8 +779,9 @@ export default function BowlView({
                           textAnchor={textAnchor}
                           fontSize="12"
                           fontWeight="normal"
-                          fill="#111827"
+                          fill="#000000"
                           fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
                         >
                           {pt.val.toFixed(2)}
                         </text>
@@ -781,7 +796,7 @@ export default function BowlView({
                     width={plotWidth}
                     height={plotHeight}
                     fill="none"
-                    stroke="#111827"
+                    stroke="#000000"
                     strokeWidth="1.5"
                   />
 
@@ -792,8 +807,9 @@ export default function BowlView({
                     textAnchor="middle"
                     fontSize="16"
                     fontWeight="bold"
-                    fill="#111827"
+                    fill="#000000"
                     fontFamily="Arial, sans-serif"
+                    shapeRendering="auto"
                     transform={`rotate(-90 ${padding.left - 48} ${padding.top + plotHeight / 2})`}
                   >
                     Deflection (mils)
@@ -804,8 +820,9 @@ export default function BowlView({
                     textAnchor="middle"
                     fontSize="16"
                     fontWeight="bold"
-                    fill="#111827"
+                    fill="#000000"
                     fontFamily="Arial, sans-serif"
+                    shapeRendering="auto"
                   >
                     Sensor
                   </text>
@@ -911,11 +928,16 @@ export default function BowlView({
               const count = sectionStats.rowsWithDistance.length;
               const cWidth = chartWidth;
               const cHeight = 220;
-              const pad = { top: 30, right: 25, bottom: 42, left: 65 };
+              const pad = { top: 25, right: 20, bottom: 46, left: 60 };
               const pWidth = cWidth - pad.left - pad.right;
               const pHeight = cHeight - pad.top - pad.bottom;
               const slotWidth = count > 1 ? pWidth / count : pWidth;
-              const barWidth = Math.max(3, Math.min(14, slotWidth - 2));
+              const barWidth = Math.max(2.5, Math.min(14, slotWidth - 2));
+
+              // Compute station label font size based on density
+              const stationFontSize = count > 60 ? 8 : count > 35 ? 9 : 10;
+              // Sample interval if there are way too many bars (e.g. > 100), otherwise show all
+              const step = count > 80 ? Math.ceil(count / 50) : 1;
 
               return (
                 <div
@@ -934,6 +956,8 @@ export default function BowlView({
                     ref={rmseSvgRef}
                     viewBox={`0 0 ${cWidth} ${cHeight}`}
                     style={{ width: "100%", height: "auto", overflow: "visible", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
                     {/* Horizontal Gridlines & Y-axis Ticks */}
                     {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
@@ -950,20 +974,21 @@ export default function BowlView({
                             strokeWidth="1"
                           />
                           <line
-                            x1={pad.left}
+                            x1={pad.left - 4}
                             y1={y}
-                            x2={pad.left + 5}
+                            x2={pad.left}
                             y2={y}
-                            stroke="#111827"
-                            strokeWidth="1.5"
+                            stroke="#000000"
+                            strokeWidth="1"
                           />
                           <text
                             x={pad.left - 8}
-                            y={y + 4}
+                            y={y + 3.5}
                             textAnchor="end"
-                            fontSize="11"
-                            fill="#6b7280"
-                            fontFamily="JetBrains Mono, monospace"
+                            fontSize="10"
+                            fill="#000000"
+                            fontFamily="Arial, sans-serif"
+                            shapeRendering="auto"
                           >
                             {val}
                           </text>
@@ -971,12 +996,13 @@ export default function BowlView({
                       );
                     })}
 
-                    {/* Station Bars */}
+                    {/* Station Bars & Ticks */}
                     {sectionStats.rowsWithDistance.map((item, idx) => {
                       const cx = pad.left + idx * slotWidth + slotWidth / 2;
                       const bx = cx - barWidth / 2;
                       const bHeight = maxRmse > 0 ? (item.rmse / maxRmse) * pHeight : 0;
                       const by = pad.top + pHeight - bHeight;
+                      const showLabel = idx % step === 0 || idx === count - 1;
 
                       return (
                         <g key={item.originalIdx}>
@@ -985,26 +1011,37 @@ export default function BowlView({
                             y={by}
                             width={barWidth}
                             height={bHeight}
-                            rx={2}
-                            fill="#111827"
+                            rx={0}
+                            fill="#000000"
                           >
                             <title>Station {item.row.StationID}</title>
                           </rect>
 
-                          {/* X-axis Station Ticks (sampled) */}
-                          {(idx === 0 ||
-                            idx === count - 1 ||
-                            idx % Math.ceil(count / 10) === 0) && (
-                            <text
-                              x={cx}
-                              y={pad.top + pHeight + 16}
-                              textAnchor="middle"
-                              fontSize="10"
-                              fill="#6b7280"
-                              fontFamily="JetBrains Mono, monospace"
-                            >
-                              {item.row.StationID ?? idx}
-                            </text>
+                          {/* X-axis Station Ticks & Rotated Label (-90deg centered on bar) */}
+                          {showLabel && (
+                            <g>
+                              <line
+                                x1={cx}
+                                y1={pad.top + pHeight}
+                                x2={cx}
+                                y2={pad.top + pHeight + 4}
+                                stroke="#000000"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={cx}
+                                y={pad.top + pHeight + 6}
+                                textAnchor="end"
+                                dominantBaseline="central"
+                                fontSize={stationFontSize}
+                                fill="#000000"
+                                fontFamily="Arial, sans-serif"
+                                shapeRendering="auto"
+                                transform={`rotate(-90 ${cx} ${pad.top + pHeight + 6})`}
+                              >
+                                {item.row.StationID ?? idx + 1}
+                              </text>
+                            </g>
                           )}
                         </g>
                       );
@@ -1017,31 +1054,33 @@ export default function BowlView({
                       width={pWidth}
                       height={pHeight}
                       fill="none"
-                      stroke="#111827"
+                      stroke="#000000"
                       strokeWidth="1.5"
                     />
 
                     {/* Axis Titles */}
                     <text
-                      x={pad.left - 46}
+                      x={pad.left - 42}
                       y={pad.top + pHeight / 2}
                       textAnchor="middle"
-                      fontSize="13"
+                      fontSize="11"
                       fontWeight="bold"
-                      fill="#111827"
+                      fill="#000000"
                       fontFamily="Arial, sans-serif"
-                      transform={`rotate(-90 ${pad.left - 46} ${pad.top + pHeight / 2})`}
+                      shapeRendering="auto"
+                      transform={`rotate(-90 ${pad.left - 42} ${pad.top + pHeight / 2})`}
                     >
                       RMSE (mils)
                     </text>
                     <text
                       x={pad.left + pWidth / 2}
-                      y={cHeight - 4}
+                      y={pad.top + pHeight + 38}
                       textAnchor="middle"
-                      fontSize="12"
+                      fontSize="11"
                       fontWeight="bold"
-                      fill="#111827"
+                      fill="#000000"
                       fontFamily="Arial, sans-serif"
+                      shapeRendering="auto"
                     >
                       Station ID
                     </text>
@@ -1387,6 +1426,8 @@ export default function BowlView({
                     ref={overlaySvgRef}
                     viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                     style={{ width: "100%", height: "auto", overflow: "visible", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
                     {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
                     {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
@@ -1407,7 +1448,7 @@ export default function BowlView({
                             y1={y}
                             x2={padding.left + 6}
                             y2={y}
-                            stroke="#111827"
+                            stroke="#000000"
                             strokeWidth="1.5"
                           />
                           <text
@@ -1415,8 +1456,9 @@ export default function BowlView({
                             y={y + 5}
                             textAnchor="end"
                             fontSize="14"
-                            fill="#111827"
+                            fill="#000000"
                             fontFamily="Arial, sans-serif"
+                            shapeRendering="auto"
                           >
                             {val}
                           </text>
@@ -1440,7 +1482,7 @@ export default function BowlView({
                           y1={padding.top + plotHeight}
                           x2={pt.x}
                           y2={padding.top + plotHeight - 6}
-                          stroke="#111827"
+                          stroke="#000000"
                           strokeWidth="1.5"
                         />
                         <text
@@ -1449,8 +1491,9 @@ export default function BowlView({
                           textAnchor="middle"
                           fontSize="14"
                           fontWeight="normal"
-                          fill="#111827"
+                          fill="#000000"
                           fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
                         >
                           {pt.sensor}
                         </text>
@@ -1607,7 +1650,7 @@ export default function BowlView({
                       width={plotWidth}
                       height={plotHeight}
                       fill="none"
-                      stroke="#111827"
+                      stroke="#000000"
                       strokeWidth="1.5"
                     />
 
@@ -1620,7 +1663,7 @@ export default function BowlView({
                           width={legendWidth}
                           height={legendHeight}
                           fill="rgba(255, 255, 255, 0.96)"
-                          stroke="#111827"
+                          stroke="#000000"
                           strokeWidth="1.5"
                           rx="3"
                         />
@@ -1647,15 +1690,16 @@ export default function BowlView({
                                 </>
                               )}
                               {item.type === "thin-black" && (
-                                <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#111827" strokeWidth="1.2" opacity="0.6" />
+                                <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#000000" strokeWidth="1.2" opacity="0.6" />
                               )}
                               <text
                                 x="42"
                                 y={itemY + 4}
                                 fontSize="11"
                                 fontFamily="Arial, sans-serif"
-                                fill="#111827"
+                                fill="#000000"
                                 fontWeight={item.type === "thin-black" ? "normal" : "600"}
+                                shapeRendering="auto"
                               >
                                 {item.label}
                               </text>
@@ -1672,8 +1716,9 @@ export default function BowlView({
                       textAnchor="middle"
                       fontSize="16"
                       fontWeight="bold"
-                      fill="#111827"
+                      fill="#000000"
                       fontFamily="Arial, sans-serif"
+                      shapeRendering="auto"
                       transform={`rotate(-90 ${padding.left - 48} ${padding.top + plotHeight / 2})`}
                     >
                       Deflection (mils)
@@ -1684,8 +1729,9 @@ export default function BowlView({
                       textAnchor="middle"
                       fontSize="16"
                       fontWeight="bold"
-                      fill="#111827"
+                      fill="#000000"
                       fontFamily="Arial, sans-serif"
+                      shapeRendering="auto"
                     >
                       Sensor
                     </text>
