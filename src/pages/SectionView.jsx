@@ -56,50 +56,54 @@ export default function SectionView({
     setLoading(true);
     setTableData(null);
     setSectionThickness(section.thickness ?? 10);
-    getSectionData(user.uid, project.id, section.id).then(async (data) => {
-      setTableData(data);
-      const localSaved = (() => {
-        try {
-          const item = localStorage.getItem(`fwd_excluded_${section.id}`);
-          return item ? JSON.parse(item) : null;
-        } catch {
-          return null;
-        }
-      })();
-      setExcludedStations(data.excludedStations ?? localSaved ?? []);
-      const localThickness = (() => {
-        try {
-          const item = localStorage.getItem(`fwd_section_thickness_${section.id}`);
-          return item ? parseFloat(item) : null;
-        } catch {
-          return null;
-        }
-      })();
-      setSectionThickness(data.thickness ?? localThickness ?? section.thickness ?? 10);
+    getSectionData(user.uid, project.id, section.id)
+      .then(async (data) => {
+        setTableData(data);
+        const localSaved = (() => {
+          try {
+            const item = localStorage.getItem(`fwd_excluded_${section.id}`);
+            return item ? JSON.parse(item) : null;
+          } catch {
+            return null;
+          }
+        })();
+        setExcludedStations(data.excludedStations ?? localSaved ?? []);
+        const localThickness = (() => {
+          try {
+            const item = localStorage.getItem(`fwd_section_thickness_${section.id}`);
+            return item ? parseFloat(item) : null;
+          } catch {
+            return null;
+          }
+        })();
+        setSectionThickness(data.thickness ?? localThickness ?? section.thickness ?? 10);
 
-      // Resolve hidden columns from section Firestore doc, localStorage, or user default
-      let effectiveHidden = data.hiddenColumns;
-      if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
-        try {
-          const localItem = localStorage.getItem(`fwd_hidden_cols_${section.id}`);
-          if (localItem) effectiveHidden = JSON.parse(localItem);
-        } catch {}
-      }
-      if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
-        const userDefaults = await getUserDefaultHiddenColumns(user.uid);
-        if (userDefaults?.data?.length || userDefaults?.normalized?.length) {
-          effectiveHidden = userDefaults;
+        // If not managed at parent level, resolve local hidden columns
+        if (!propHiddenColumns) {
+          let effectiveHidden = data.hiddenColumns;
+          if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
+            try {
+              const localItem = localStorage.getItem("fwd_user_hidden_columns");
+              if (localItem) effectiveHidden = JSON.parse(localItem);
+            } catch {}
+          }
+          if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
+            const userDefaults = await getUserDefaultHiddenColumns(user.uid);
+            if (userDefaults?.data?.length || userDefaults?.normalized?.length) {
+              effectiveHidden = userDefaults;
+            }
+          }
+          if (effectiveHidden) {
+            setLocalHiddenColumns(effectiveHidden);
+          }
         }
-      }
-      if (effectiveHidden) {
-        setHiddenColumns(effectiveHidden);
-        try {
-          localStorage.setItem(`fwd_hidden_cols_${section.id}`, JSON.stringify(effectiveHidden));
-        } catch {}
-      }
-
-      setLoading(false);
-    });
+      })
+      .catch((err) => {
+        console.error("Failed to load section data:", err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [section?.id]);
 
   const handleToggleExcludeStation = (stationId) => {
