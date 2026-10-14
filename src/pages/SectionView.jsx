@@ -30,6 +30,7 @@ export default function SectionView({
   const setActiveTab = onTabChange ?? setLocalTab;
   const [tableData, setTableData] = useState(null); // { rows, columns }
   const [excludedStations, setExcludedStations] = useState([]);
+  const [sectionThickness, setSectionThickness] = useState(() => section?.thickness ?? 10);
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState("A");
@@ -38,6 +39,7 @@ export default function SectionView({
     if (!section) return;
     setLoading(true);
     setTableData(null);
+    setSectionThickness(section.thickness ?? 10);
     getSectionData(user.uid, project.id, section.id).then((data) => {
       setTableData(data);
       const localSaved = (() => {
@@ -49,6 +51,15 @@ export default function SectionView({
         }
       })();
       setExcludedStations(data.excludedStations ?? localSaved ?? []);
+      const localThickness = (() => {
+        try {
+          const item = localStorage.getItem(`fwd_section_thickness_${section.id}`);
+          return item ? parseFloat(item) : null;
+        } catch {
+          return null;
+        }
+      })();
+      setSectionThickness(data.thickness ?? localThickness ?? section.thickness ?? 10);
       setLoading(false);
     });
   }, [section?.id]);
@@ -136,6 +147,20 @@ export default function SectionView({
           {tableData?.rows?.length > 0 && (
             <span className="badge badge-green">
               {tableData.rows.length.toLocaleString()} rows
+            </span>
+          )}
+          {sectionThickness && (
+            <span
+              className="badge"
+              style={{
+                backgroundColor: "#fef3c7",
+                color: "#92400e",
+                borderColor: "#fde68a",
+                fontWeight: 600,
+              }}
+              title={`Permanent slab thickness for this section: ${sectionThickness} in`}
+            >
+              📏 {sectionThickness}″ slab
             </span>
           )}
           {excludedStations.length > 0 && (
@@ -245,7 +270,13 @@ export default function SectionView({
           key={`${section?.id}-${excludedStations.join(",")}`}
           rows={activeNormalizedRows}
           columns={tableData.columns}
+          projectId={project?.id}
           sectionId={section?.id}
+          initialThickness={sectionThickness}
+          onThicknessChange={(val) => {
+            setSectionThickness(val);
+            if (section) section.thickness = val;
+          }}
           selectedVariant={selectedVariant}
           availableVariants={availableVariants}
           onSelectVariant={setSelectedVariant}

@@ -41,13 +41,14 @@ export const subscribeProjects = (uid, callback) => {
 
 // ── Sections ──────────────────────────────────────────────────────────────────
 
-export const createSection = async (uid, projectId, name) => {
+export const createSection = async (uid, projectId, name, thickness = 10) => {
   const ref = collection(db, "users", uid, "projects", projectId, "sections");
   return addDoc(ref, {
     name,
     createdAt: serverTimestamp(),
     rowCount: 0,
     columns: [],
+    thickness: Number(thickness) || 10,
   });
 };
 
@@ -128,14 +129,35 @@ export const getSectionData = async (uid, projectId, sectionId) => {
     sectionId
   );
   const sectionSnap = await getDoc(sectionRef);
-  if (!sectionSnap.exists()) return { rows: [], columns: [], excludedStations: [] };
+  if (!sectionSnap.exists()) return { rows: [], columns: [], excludedStations: [], thickness: 10 };
 
-  const { columns, excludedStations = [] } = sectionSnap.data();
+  const { columns, excludedStations = [], thickness = 10 } = sectionSnap.data();
   const chunksRef = collection(sectionRef, "chunks");
   const chunksSnap = await getDocs(query(chunksRef, orderBy("index", "asc")));
 
   const rows = chunksSnap.docs.flatMap((d) => d.data().rows);
-  return { rows, columns, excludedStations };
+  return { rows, columns, excludedStations, thickness: thickness !== undefined ? thickness : 10 };
+};
+
+export const updateSectionThickness = async (
+  uid,
+  projectId,
+  sectionId,
+  thickness
+) => {
+  if (!uid || !projectId || !sectionId) return;
+  const sectionRef = doc(
+    db,
+    "users",
+    uid,
+    "projects",
+    projectId,
+    "sections",
+    sectionId
+  );
+  const parsed = parseFloat(thickness);
+  const validThickness = !isNaN(parsed) && parsed > 0 ? parsed : 10;
+  await setDoc(sectionRef, { thickness: validThickness }, { merge: true });
 };
 
 export const updateSectionExcludedStations = async (
@@ -154,4 +176,36 @@ export const updateSectionExcludedStations = async (
     sectionId
   );
   await setDoc(sectionRef, { excludedStations }, { merge: true });
+};
+
+// ── User Settings / Statewide Equation ────────────────────────────────────────
+
+export const getUserEquation = async (uid) => {
+  if (!uid) return null;
+  try {
+    const userRef = doc(db, "users", uid);
+    const snap = await getDoc(userRef);
+    if (snap.exists() && snap.data().statewideEquation) {
+      return snap.data().statewideEquation;
+    }
+  } catch (err) {
+    console.error("Failed to load user equation from Firestore:", err);
+  }
+  return null;
+};
+
+export const saveUserEquation = async (uid, coeffA, powerB) => {
+  if (!uid) return;
+  const userRef = doc(db, "users", uid);
+  await setDoc(
+    userRef,
+    {
+      statewideEquation: {
+        a: String(coeffA),
+        b: String(powerB),
+        updatedAt: serverTimestamp(),
+      },
+    },
+    { merge: true }
+  );
 };

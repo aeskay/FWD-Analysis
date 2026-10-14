@@ -1,5 +1,11 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import {
+  getUserEquation,
+  saveUserEquation,
+  updateSectionThickness,
+} from "../firebase/firestore";
 
 const DEFLECTION_RE = /^D(\d+)$/;
 
@@ -51,16 +57,22 @@ function getDmiValue(row) {
 export default function ProfileView({
   rows = [],
   columns = [],
+  projectId = "",
   sectionId = "",
+  initialThickness = 10,
+  onThicknessChange,
   selectedVariant = "A",
   availableVariants = [],
   onSelectVariant,
 }) {
+  const { user } = useAuth();
+  const { show } = useToast() || {};
+
   const [selectedSensor, setSelectedSensor] = useState("D1");
   const [showAverageLine, setShowAverageLine] = useState(true);
   const [showStatewideLine, setShowStatewideLine] = useState(true);
 
-  // Global persistence for a and b (persists across sections, projects, and logout/login)
+  // ── Global Equation State (Firestore + LocalStorage) ──────────────────────
   const [coeffA, setCoeffA] = useState(() => {
     try {
       return localStorage.getItem("fwd_statewide_a") || "60";
@@ -77,37 +89,34 @@ export default function ProfileView({
     }
   });
 
-  // Section persistence for Slab Thickness (persists per sectionId)
-  const [prevSectionId, setPrevSectionId] = useState(sectionId);
-  const [thickness, setThickness] = useState(() => {
-    try {
-      if (sectionId) {
-        const saved = localStorage.getItem(`fwd_section_thickness_${sectionId}`);
-        if (saved) return saved;
+  const [savedEquation, setSavedEquation] = useState({ a: coeffA, b: powerB });
+  const [equationStatus, setEquationStatus] = useState("saved"); // "saved" | "unsaved" | "saving"
+
+  // Fetch equation from Firestore on mount
+  useEffect(() => {
+    if (!user?.uid) return;
+    getUserEquation(user.uid).then((eq) => {
+      if (eq && (eq.a !== undefined || eq.b !== undefined)) {
+        const aVal = String(eq.a ?? "60");
+        const bVal = String(eq.b ?? "-1.5");
+        setCoeffA(aVal);
+        setPowerB(bVal);
+        setSavedEquation({ a: aVal, b: bVal });
+        setEquationStatus("saved");
+        try {
+          localStorage.setItem("fwd_statewide_a", aVal);
+          localStorage.setItem("fwd_statewide_b", bVal);
+        } catch {}
       }
-      return localStorage.getItem("fwd_default_thickness") || "10";
-    } catch {
-      return "10";
-    }
-  });
+    });
+  }, [user?.uid]);
 
-  // When sectionId changes, reload the saved thickness for that specific section
-  if (prevSectionId !== sectionId) {
-    setPrevSectionId(sectionId);
-    try {
-      const saved = sectionId
-        ? localStorage.getItem(`fwd_section_thickness_${sectionId}`)
-        : null;
-      setThickness(saved || localStorage.getItem("fwd_default_thickness") || "10");
-    } catch {}
-  }
-
-  // Handlers to update state and localStorage
   const handleAChange = (val) => {
     setCoeffA(val);
     try {
       localStorage.setItem("fwd_statewide_a", val);
     } catch {}
+    setEquationStatus(val === savedEquation.a && powerB === savedEquation.b ? "saved" : "unsaved");
   };
 
   const handleBChange = (val) => {
@@ -115,7 +124,58 @@ export default function ProfileView({
     try {
       localStorage.setItem("fwd_statewide_b", val);
     } catch {}
+    setEquationStatus(coeffA === savedEquation.a && val === savedEquation.b ? "saved" : "unsaved");
   };
+
+  const handleSaveEquation = async () => {
+    if (!user?.uid) {
+      show?.("Sign in to save equation to your cloud profile", "info");
+      return;
+    }
+    setEquationStatus("saving");
+    try {
+      await saveUserEquation(user.uid, coeffA, powerB);
+      setSavedEquation({ a: coeffA, b: powerB });
+      setEquationStatus("saved");
+      show?.(`Statewide equation (a=${coeffA}, b=${powerB}) saved to cloud!`, "success");
+    } catch (err) {
+      console.error("Failed to save equation:", err);
+      setEquationStatus("unsaved");
+      show?.("Failed to save equation: " + err.message, "error");
+    }
+  };
+
+  // ── Section Slab Thickness State (Firestore Section Document + LocalStorage) ─
+  const [thickness, setThickness] = useState(() => {
+    if (initialThickness !== undefined && initialThickness !== null) {
+      return String(initialThickness);
+    }
+    try {
+      if (sectionId) {
+        const saved = localStorage.getItem(`fwd_section_thickness_${sectionId}`);
+        if (saved) return saved;
+      }
+      return "10";
+    } catch {
+      return "10";
+    }
+  });
+
+  const [savedThickness, setSavedThickness] = useState(thickness);
+  const [thicknessStatus, setThicknessStatus] = useState("saved"); // "saved" | "unsaved" | "saving"
+
+  // When initialThickness or sectionId changes from parent
+  useEffect(() => {
+    if (initialThickness !== undefined && initialThickness !== null) {
+      const sVal = String(initialThickness);
+      setThickness(sVal);
+      setSavedThickness(sVal);
+      setThicknessStatus("saved");
+      try {
+        if (sectionId) localStorage.setItem(`fwd_section_thickness_${sectionId}`, sVal);
+      } catch {}
+    }
+  }, [sectionId, initialThickness]);
 
   const handleThicknessChange = (val) => {
     setThickness(val);
@@ -123,13 +183,48 @@ export default function ProfileView({
       if (sectionId) {
         localStorage.setItem(`fwd_section_thickness_${sectionId}`, val);
       }
-      localStorage.setItem("fwd_default_thickness", val);
     } catch {}
+    setThicknessStatus(val === savedThickness ? "saved" : "unsaved");
+  };
+
+  const handleSaveThickness = async (valToSave = thickness) => {
+    const parsed = parseFloat(valToSave);
+    const validVal = !isNaN(parsed) && parsed > 0 ? parsed : 10;
+    if (!user?.uid || !projectId || !sectionId) {
+      setSavedThickness(String(validVal));
+      setThicknessStatus("saved");
+      onThicknessChange?.(validVal);
+      return;
+    }
+    setThicknessStatus("saving");
+    try {
+      await updateSectionThickness(user.uid, projectId, sectionId, validVal);
+      setSavedThickness(String(validVal));
+      setThicknessStatus("saved");
+      onThicknessChange?.(validVal);
+      show?.(`Section slab thickness saved (${validVal} in) to database!`, "success");
+    } catch (err) {
+      console.error("Failed to save section thickness:", err);
+      setThicknessStatus("unsaved");
+      show?.("Failed to save thickness: " + err.message, "error");
+    }
+  };
+
+  const handleThicknessBlur = () => {
+    if (thickness !== savedThickness && thicknessStatus === "unsaved") {
+      handleSaveThickness();
+    }
+  };
+
+  const handleThicknessKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.target.blur();
+      handleSaveThickness();
+    }
   };
 
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const svgRef = useRef(null);
-  const { show } = useToast() || {};
 
   // Extract deflection columns sorted numerically: D1, D2, D3...
   const deflectionCols = useMemo(() => {
@@ -554,7 +649,7 @@ export default function ProfileView({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "var(--sp-4)",
+            gap: "var(--sp-3)",
             padding: "8px var(--sp-6)",
             background: "#fef2f2",
             borderBottom: "1px solid #fee2e2",
@@ -562,13 +657,14 @@ export default function ProfileView({
             fontSize: 13,
           }}
         >
-          <span style={{ fontWeight: 700, color: "#991b1b" }}>
-            Statewide Deflection Function:
-          </span>
-
-          <span style={{ fontFamily: "serif", fontStyle: "italic", color: "#7f1d1d" }}>
-            Deflection = a × (thickness)ᵇ
-          </span>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontWeight: 700, color: "#991b1b" }}>
+              Statewide Function:
+            </span>
+            <span style={{ fontFamily: "serif", fontStyle: "italic", color: "#7f1d1d" }}>
+              Deflection = a × (thickness)ᵇ
+            </span>
+          </div>
 
           {/* Parameter: a */}
           <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -578,8 +674,11 @@ export default function ProfileView({
               step="any"
               value={coeffA}
               onChange={(e) => handleAChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveEquation();
+              }}
               style={{
-                width: 70,
+                width: 65,
                 padding: "2px 6px",
                 border: "1px solid #fca5a5",
                 borderRadius: "var(--r-sm)",
@@ -591,15 +690,78 @@ export default function ProfileView({
             />
           </div>
 
-          {/* Parameter: slab thickness */}
+          {/* Parameter: b */}
           <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <label style={{ fontWeight: 600, color: "#991b1b" }}>Slab Thickness:</label>
+            <label style={{ fontWeight: 600, color: "#991b1b" }}>b:</label>
+            <input
+              type="number"
+              step="any"
+              value={powerB}
+              onChange={(e) => handleBChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveEquation();
+              }}
+              style={{
+                width: 65,
+                padding: "2px 6px",
+                border: "1px solid #fca5a5",
+                borderRadius: "var(--r-sm)",
+                fontSize: 13,
+                fontWeight: 600,
+                textAlign: "right",
+                background: "#ffffff",
+              }}
+            />
+          </div>
+
+          {/* Save Equation Button */}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={handleSaveEquation}
+            disabled={equationStatus === "saving"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: "var(--r-sm)",
+              background: equationStatus === "unsaved" ? "#dc2626" : "#ffffff",
+              color: equationStatus === "unsaved" ? "#ffffff" : "#b91c1c",
+              border: `1px solid ${equationStatus === "unsaved" ? "#b91c1c" : "#fca5a5"}`,
+              cursor: "pointer",
+              boxShadow: equationStatus === "unsaved" ? "0 1px 3px rgba(220,38,38,0.25)" : "none",
+              transition: "all 0.15s ease",
+            }}
+            title="Store equation parameters permanently to Firestore for your account (persists across sessions)"
+          >
+            {equationStatus === "saving" ? (
+              <>⏳ Saving…</>
+            ) : equationStatus === "unsaved" ? (
+              <>💾 Save Equation *</>
+            ) : (
+              <>✓ Equation Saved</>
+            )}
+          </button>
+
+          {/* Vertical Divider */}
+          <div style={{ width: 1, height: 20, background: "#fca5a5", margin: "0 4px" }} />
+
+          {/* Parameter: slab thickness (Section attribute) */}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <label style={{ fontWeight: 600, color: "#991b1b" }} title="Permanent attribute of this specific section">
+              Slab Thickness:
+            </label>
             <input
               type="number"
               step="0.5"
               min="1"
               value={thickness}
               onChange={(e) => handleThicknessChange(e.target.value)}
+              onBlur={handleThicknessBlur}
+              onKeyDown={handleThicknessKeyDown}
               style={{
                 width: 65,
                 padding: "2px 6px",
@@ -612,27 +774,37 @@ export default function ProfileView({
               }}
             />
             <span style={{ color: "#7f1d1d", fontSize: 12 }}>in</span>
-          </div>
 
-          {/* Parameter: b */}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <label style={{ fontWeight: 600, color: "#991b1b" }}>b:</label>
-            <input
-              type="number"
-              step="any"
-              value={powerB}
-              onChange={(e) => handleBChange(e.target.value)}
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => handleSaveThickness()}
+              disabled={thicknessStatus === "saving"}
               style={{
-                width: 65,
-                padding: "2px 6px",
-                border: "1px solid #fca5a5",
-                borderRadius: "var(--r-sm)",
-                fontSize: 13,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
+                fontSize: 11,
                 fontWeight: 600,
-                textAlign: "right",
-                background: "#ffffff",
+                padding: "2px 8px",
+                borderRadius: "var(--r-sm)",
+                background: thicknessStatus === "unsaved" ? "#dc2626" : "#ffffff",
+                color: thicknessStatus === "unsaved" ? "#ffffff" : "#b91c1c",
+                border: `1px solid ${thicknessStatus === "unsaved" ? "#b91c1c" : "#fca5a5"}`,
+                cursor: "pointer",
+                boxShadow: thicknessStatus === "unsaved" ? "0 1px 3px rgba(220,38,38,0.25)" : "none",
+                transition: "all 0.15s ease",
               }}
-            />
+              title="Save slab thickness permanently as an attribute of this section in Firestore database"
+            >
+              {thicknessStatus === "saving" ? (
+                <>⏳ Saving…</>
+              ) : thicknessStatus === "unsaved" ? (
+                <>💾 Save</>
+              ) : (
+                <>✓ Saved</>
+              )}
+            </button>
           </div>
 
           {/* Calculated Output Pill */}
@@ -651,7 +823,7 @@ export default function ProfileView({
             }}
           >
             <span>Target Line:</span>
-            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 14 }}>
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}>
               {statewideVal !== null ? `${statewideVal.toFixed(2)} mils` : "Invalid input"}
             </span>
           </div>
