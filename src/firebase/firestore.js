@@ -129,14 +129,40 @@ export const getSectionData = async (uid, projectId, sectionId) => {
     sectionId
   );
   const sectionSnap = await getDoc(sectionRef);
-  if (!sectionSnap.exists()) return { rows: [], columns: [], excludedStations: [], thickness: 10 };
+  if (!sectionSnap.exists()) {
+    return {
+      rows: [],
+      columns: [],
+      excludedStations: [],
+      thickness: 10,
+      hiddenColumns: { data: [], normalized: [] },
+    };
+  }
 
-  const { columns, excludedStations = [], thickness = 10 } = sectionSnap.data();
+  const {
+    columns,
+    excludedStations = [],
+    thickness = 10,
+    hiddenColumns = { data: [], normalized: [] },
+  } = sectionSnap.data();
   const chunksRef = collection(sectionRef, "chunks");
   const chunksSnap = await getDocs(query(chunksRef, orderBy("index", "asc")));
 
   const rows = chunksSnap.docs.flatMap((d) => d.data().rows);
-  return { rows, columns, excludedStations, thickness: thickness !== undefined ? thickness : 10 };
+  const normalizedHidden = Array.isArray(hiddenColumns)
+    ? { data: hiddenColumns, normalized: hiddenColumns }
+    : {
+        data: hiddenColumns?.data ?? [],
+        normalized: hiddenColumns?.normalized ?? [],
+      };
+
+  return {
+    rows,
+    columns,
+    excludedStations,
+    thickness: thickness !== undefined ? thickness : 10,
+    hiddenColumns: normalizedHidden,
+  };
 };
 
 export const updateSectionThickness = async (
@@ -178,7 +204,26 @@ export const updateSectionExcludedStations = async (
   await setDoc(sectionRef, { excludedStations }, { merge: true });
 };
 
-// ── User Settings / Statewide Equation ────────────────────────────────────────
+export const updateSectionHiddenColumns = async (
+  uid,
+  projectId,
+  sectionId,
+  hiddenColumns
+) => {
+  if (!uid || !projectId || !sectionId) return;
+  const sectionRef = doc(
+    db,
+    "users",
+    uid,
+    "projects",
+    projectId,
+    "sections",
+    sectionId
+  );
+  await setDoc(sectionRef, { hiddenColumns }, { merge: true });
+};
+
+// ── User Settings / Statewide Equation / Default Hidden Columns ───────────────
 
 export const getUserEquation = async (uid) => {
   if (!uid) return null;
@@ -205,6 +250,36 @@ export const saveUserEquation = async (uid, coeffA, powerB) => {
         b: String(powerB),
         updatedAt: serverTimestamp(),
       },
+    },
+    { merge: true }
+  );
+};
+
+export const getUserDefaultHiddenColumns = async (uid) => {
+  if (!uid) return null;
+  try {
+    const userRef = doc(db, "users", uid);
+    const snap = await getDoc(userRef);
+    if (snap.exists() && snap.data().defaultHiddenColumns) {
+      const hc = snap.data().defaultHiddenColumns;
+      return Array.isArray(hc)
+        ? { data: hc, normalized: hc }
+        : { data: hc?.data ?? [], normalized: hc?.normalized ?? [] };
+    }
+  } catch (err) {
+    console.error("Failed to load default hidden columns from Firestore:", err);
+  }
+  return null;
+};
+
+export const saveUserDefaultHiddenColumns = async (uid, hiddenColumns) => {
+  if (!uid) return;
+  const userRef = doc(db, "users", uid);
+  await setDoc(
+    userRef,
+    {
+      defaultHiddenColumns: hiddenColumns,
+      updatedAt: serverTimestamp(),
     },
     { merge: true }
   );

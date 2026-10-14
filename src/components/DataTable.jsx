@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { exportToExcel } from "../utils/excelExport";
+import ColumnFilter from "./ColumnFilter";
 
 const PAGE_SIZE = 100;
 
@@ -41,10 +42,20 @@ export default function DataTable({
   selectedVariant = "A",
   onSelectVariant,
   normalizedData = null,
+  hiddenColumns = [],
+  allHiddenColumns = { data: [], normalized: [] },
+  onUpdateHiddenColumns,
+  onSaveHiddenColumnsDefault,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
+
+  const visibleColumns = useMemo(() => {
+    const hiddenSet = new Set(hiddenColumns);
+    const filtered = columns.filter((c) => !hiddenSet.has(c));
+    return filtered.length > 0 ? filtered : columns;
+  }, [columns, hiddenColumns]);
 
   const sorted = useMemo(() => {
     if (!sortCol) return rows;
@@ -70,7 +81,7 @@ export default function DataTable({
   };
 
   const handleExport = () => {
-    exportToExcel(columns, rows, sectionName ?? "fwd_masterfile", normalizedData);
+    exportToExcel(visibleColumns, rows, sectionName ?? "fwd_masterfile", normalizedData);
   };
 
   const sortIcon = (col) => {
@@ -131,15 +142,19 @@ export default function DataTable({
           gap: "var(--sp-4)",
         }}
       >
-        <div className="stats-row" style={{ padding: 0, border: 0, margin: 0, display: "flex", gap: "var(--sp-3)" }}>
+        <div className="stats-row" style={{ padding: 0, border: 0, margin: 0, display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
           <div className="stat-chip">
             <span className="stat-value">{rows.length.toLocaleString()}</span>
             <span className="stat-label">total drops</span>
           </div>
-          <div className="stat-chip">
-            <span className="stat-value">{columns.length}</span>
-            <span className="stat-label">columns</span>
-          </div>
+          <ColumnFilter
+            columns={columns}
+            hiddenColumns={hiddenColumns}
+            allHiddenColumns={allHiddenColumns}
+            onUpdateHiddenColumns={onUpdateHiddenColumns}
+            onSaveAsDefault={onSaveHiddenColumnsDefault}
+            currentTab="data"
+          />
         </div>
         <button className="btn btn-secondary btn-sm" onClick={handleExport}>
           ⬇ Export to Excel
@@ -152,7 +167,7 @@ export default function DataTable({
           <thead>
             <tr>
               <th style={{ width: 60, textAlign: "center" }}>Variant</th>
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col}
                   className={sortCol === col ? "sort-active" : ""}
@@ -186,7 +201,7 @@ export default function DataTable({
                       {row._variantLetter ?? "—"}
                     </span>
                   </td>
-                  {columns.map((col) => {
+                  {visibleColumns.map((col) => {
                     const cls =
                       COL_CLASS[col] ||
                       (DEFLECTION_RE.test(col)

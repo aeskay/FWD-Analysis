@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { getSectionData, updateSectionExcludedStations } from "../firebase/firestore";
+import {
+  getSectionData,
+  updateSectionExcludedStations,
+  updateSectionHiddenColumns,
+  saveUserDefaultHiddenColumns,
+  getUserDefaultHiddenColumns,
+} from "../firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import DataTable from "../components/DataTable";
 import NormalizedTable from "../components/NormalizedTable";
@@ -31,6 +37,17 @@ export default function SectionView({
   const [tableData, setTableData] = useState(null); // { rows, columns }
   const [excludedStations, setExcludedStations] = useState([]);
   const [sectionThickness, setSectionThickness] = useState(() => section?.thickness ?? 10);
+  const [hiddenColumns, setHiddenColumns] = useState(() => {
+    try {
+      if (section?.id) {
+        const item = localStorage.getItem(`fwd_hidden_cols_${section.id}`);
+        if (item) return JSON.parse(item);
+      }
+      const globalItem = localStorage.getItem("fwd_default_hidden_cols");
+      if (globalItem) return JSON.parse(globalItem);
+    } catch {}
+    return { data: [], normalized: [] };
+  });
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState("A");
@@ -40,7 +57,7 @@ export default function SectionView({
     setLoading(true);
     setTableData(null);
     setSectionThickness(section.thickness ?? 10);
-    getSectionData(user.uid, project.id, section.id).then((data) => {
+    getSectionData(user.uid, project.id, section.id).then(async (data) => {
       setTableData(data);
       const localSaved = (() => {
         try {
@@ -60,6 +77,28 @@ export default function SectionView({
         }
       })();
       setSectionThickness(data.thickness ?? localThickness ?? section.thickness ?? 10);
+
+      // Resolve hidden columns from section Firestore doc, localStorage, or user default
+      let effectiveHidden = data.hiddenColumns;
+      if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
+        try {
+          const localItem = localStorage.getItem(`fwd_hidden_cols_${section.id}`);
+          if (localItem) effectiveHidden = JSON.parse(localItem);
+        } catch {}
+      }
+      if (!effectiveHidden?.data?.length && !effectiveHidden?.normalized?.length) {
+        const userDefaults = await getUserDefaultHiddenColumns(user.uid);
+        if (userDefaults?.data?.length || userDefaults?.normalized?.length) {
+          effectiveHidden = userDefaults;
+        }
+      }
+      if (effectiveHidden) {
+        setHiddenColumns(effectiveHidden);
+        try {
+          localStorage.setItem(`fwd_hidden_cols_${section.id}`, JSON.stringify(effectiveHidden));
+        } catch {}
+      }
+
       setLoading(false);
     });
   }, [section?.id]);
@@ -96,6 +135,29 @@ export default function SectionView({
         (err) => console.error("Failed to clear exclusions:", err)
       );
     }
+  };
+
+  const handleUpdateHiddenColumns = async (nextHidden) => {
+    setHiddenColumns(nextHidden);
+    try {
+      if (section?.id) {
+        localStorage.setItem(`fwd_hidden_cols_${section.id}`, JSON.stringify(nextHidden));
+      }
+    } catch {}
+
+    if (user?.uid && project?.id && section?.id) {
+      await updateSectionHiddenColumns(user.uid, project.id, section.id, nextHidden).catch((err) =>
+        console.error("Failed to save hidden columns to section:", err)
+      );
+    }
+  };
+
+  const handleSaveHiddenColumnsAsDefault = async () => {
+    if (!user?.uid) return;
+    try {
+      localStorage.setItem("fwd_default_hidden_cols", JSON.stringify(hiddenColumns));
+    } catch {}
+    await saveUserDefaultHiddenColumns(user.uid, hiddenColumns);
   };
 
   const handleImported = () => {
@@ -246,6 +308,10 @@ export default function SectionView({
           availableVariants={availableVariants}
           selectedVariant={selectedVariant}
           onSelectVariant={setSelectedVariant}
+          hiddenColumns={hiddenColumns.data ?? []}
+          allHiddenColumns={hiddenColumns}
+          onUpdateHiddenColumns={handleUpdateHiddenColumns}
+          onSaveHiddenColumnsDefault={handleSaveHiddenColumnsAsDefault}
           normalizedData={{
             columns: tableData.columns,
             rows: activeNormalizedRows,
@@ -264,6 +330,10 @@ export default function SectionView({
           excludedStations={excludedStations}
           onToggleExcludeStation={handleToggleExcludeStation}
           onClearExclusions={handleClearExclusions}
+          hiddenColumns={hiddenColumns.normalized ?? []}
+          allHiddenColumns={hiddenColumns}
+          onUpdateHiddenColumns={handleUpdateHiddenColumns}
+          onSaveHiddenColumnsDefault={handleSaveHiddenColumnsAsDefault}
         />
       ) : activeTab === "profile" ? (
         <ProfileView

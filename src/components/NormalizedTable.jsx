@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { exportToExcel } from "../utils/excelExport";
+import ColumnFilter from "./ColumnFilter";
 
 const PAGE_SIZE = 100;
 
@@ -42,10 +43,20 @@ export default function NormalizedTable({
   excludedStations = [],
   onToggleExcludeStation,
   onClearExclusions,
+  hiddenColumns = [],
+  allHiddenColumns = { data: [], normalized: [] },
+  onUpdateHiddenColumns,
+  onSaveHiddenColumnsDefault,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
+
+  const visibleColumns = useMemo(() => {
+    const hiddenSet = new Set(hiddenColumns);
+    const filtered = columns.filter((c) => !hiddenSet.has(c));
+    return filtered.length > 0 ? filtered : columns;
+  }, [columns, hiddenColumns]);
 
   const excludedSet = useMemo(() => {
     return new Set(excludedStations.map(String));
@@ -83,7 +94,7 @@ export default function NormalizedTable({
   const handleExport = () => {
     const exportRows = rows.filter((r) => !excludedSet.has(String(r.StationID)));
     exportToExcel(rawColumns, rawRows, sectionName ?? "fwd_masterfile", {
-      columns,
+      columns: visibleColumns,
       rows: exportRows,
       targetLoad: 9000,
       selectedVariant,
@@ -143,10 +154,14 @@ export default function NormalizedTable({
               <span className="stat-label" style={{ color: "#b91c1c" }}>excluded</span>
             </div>
           )}
-          <div className="stat-chip">
-            <span className="stat-value">{columns.length}</span>
-            <span className="stat-label">columns</span>
-          </div>
+          <ColumnFilter
+            columns={columns}
+            hiddenColumns={hiddenColumns}
+            allHiddenColumns={allHiddenColumns}
+            onUpdateHiddenColumns={onUpdateHiddenColumns}
+            onSaveAsDefault={onSaveHiddenColumnsDefault}
+            currentTab="normalized"
+          />
           {excludedCount > 0 && (
             <button
               type="button"
@@ -179,7 +194,7 @@ export default function NormalizedTable({
                 Exclude
               </th>
               <th style={{ width: 60, textAlign: "center" }}>Variant</th>
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col}
                   className={sortCol === col ? "sort-active" : ""}
@@ -257,7 +272,7 @@ export default function NormalizedTable({
                       {selectedVariant}
                     </span>
                   </td>
-                  {columns.map((col) => {
+                  {visibleColumns.map((col) => {
                     const cls =
                       COL_CLASS[col] ||
                       (DEFLECTION_RE.test(col)
