@@ -46,7 +46,6 @@ export default function NormalizedTable({
   hiddenColumns = [],
   allHiddenColumns = { data: [], normalized: [] },
   onUpdateHiddenColumns,
-  onSaveHiddenColumnsDefault,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
@@ -159,7 +158,6 @@ export default function NormalizedTable({
             hiddenColumns={hiddenColumns}
             allHiddenColumns={allHiddenColumns}
             onUpdateHiddenColumns={onUpdateHiddenColumns}
-            onSaveAsDefault={onSaveHiddenColumnsDefault}
             currentTab="normalized"
           />
           {excludedCount > 0 && (

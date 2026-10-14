@@ -8,7 +8,6 @@ export default function ColumnFilter({
   hiddenColumns = [],
   allHiddenColumns = { data: [], normalized: [] },
   onUpdateHiddenColumns,
-  onSaveAsDefault,
   currentTab = "data", // "data" | "normalized"
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -125,15 +124,6 @@ export default function ColumnFilter({
     }
   };
 
-  // Save current visibility as global user default
-  const handleSaveDefault = async () => {
-    try {
-      await onSaveAsDefault?.();
-      show?.("Column filter saved as your default for all sections!", "success");
-    } catch (err) {
-      show?.("Failed to save default: " + err.message, "error");
-    }
-  };
 
   const getColBadge = (col) => {
     if (col === "StationID") return { label: "ID", color: "#1e40af", bg: "#dbeafe" };

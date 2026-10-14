@@ -45,7 +45,6 @@ export default function DataTable({
   hiddenColumns = [],
   allHiddenColumns = { data: [], normalized: [] },
   onUpdateHiddenColumns,
-  onSaveHiddenColumnsDefault,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
@@ -152,7 +151,6 @@ export default function DataTable({
             hiddenColumns={hiddenColumns}
             allHiddenColumns={allHiddenColumns}
             onUpdateHiddenColumns={onUpdateHiddenColumns}
-            onSaveAsDefault={onSaveHiddenColumnsDefault}
             currentTab="data"
           />
         </div>
