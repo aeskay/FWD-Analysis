@@ -447,7 +447,7 @@ export default function ColumnFilter({
               <span>Apply to both Data &amp; Normalized tabs</span>
             </label>
 
-            {/* Cloud persistence indicator & Save Default */}
+            {/* Cloud persistence indicator & Global section connectivity */}
             <div
               style={{
                 display: "flex",
@@ -469,23 +469,23 @@ export default function ColumnFilter({
                 {savingStatus === "saving" ? "⏳ Saving to cloud…" : "✓ Saved in cloud"}
               </span>
 
-              <button
-                type="button"
-                onClick={handleSaveDefault}
+              <span
                 style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--primary)",
-                  fontSize: 11,
+                  color: "#1d4ed8",
+                  backgroundColor: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  fontSize: 10,
                   fontWeight: 600,
-                  cursor: "pointer",
-                  padding: 0,
-                  textDecoration: "underline",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
                 }}
-                title="Save this column configuration as your default for all sections"
+                title="This column filter is connected across all sections in your account"
               >
-                Save as default
-              </button>
+                <span>🌐</span> Connected to all sections
+              </span>
             </div>
           </div>
         </div>

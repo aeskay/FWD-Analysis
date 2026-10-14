@@ -256,28 +256,37 @@ export const saveUserEquation = async (uid, coeffA, powerB) => {
 };
 
 export const getUserDefaultHiddenColumns = async (uid) => {
+  return getUserHiddenColumns(uid);
+};
+
+export const saveUserDefaultHiddenColumns = async (uid, hiddenColumns) => {
+  return saveUserHiddenColumns(uid, hiddenColumns);
+};
+
+export const getUserHiddenColumns = async (uid) => {
   if (!uid) return null;
   try {
     const userRef = doc(db, "users", uid);
     const snap = await getDoc(userRef);
-    if (snap.exists() && snap.data().defaultHiddenColumns) {
-      const hc = snap.data().defaultHiddenColumns;
+    if (snap.exists() && (snap.data().hiddenColumns || snap.data().defaultHiddenColumns)) {
+      const hc = snap.data().hiddenColumns || snap.data().defaultHiddenColumns;
       return Array.isArray(hc)
         ? { data: hc, normalized: hc }
         : { data: hc?.data ?? [], normalized: hc?.normalized ?? [] };
     }
   } catch (err) {
-    console.error("Failed to load default hidden columns from Firestore:", err);
+    console.error("Failed to load user hidden columns from Firestore:", err);
   }
   return null;
 };
 
-export const saveUserDefaultHiddenColumns = async (uid, hiddenColumns) => {
+export const saveUserHiddenColumns = async (uid, hiddenColumns) => {
   if (!uid) return;
   const userRef = doc(db, "users", uid);
   await setDoc(
     userRef,
     {
+      hiddenColumns,
       defaultHiddenColumns: hiddenColumns,
       updatedAt: serverTimestamp(),
     },

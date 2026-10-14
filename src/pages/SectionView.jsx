@@ -29,6 +29,8 @@ export default function SectionView({
   activeTab: controlledTab,
   onTabChange,
   onSectionUpdated,
+  hiddenColumns: propHiddenColumns,
+  onUpdateHiddenColumns: propOnUpdateHiddenColumns,
 }) {
   const { user } = useAuth();
   const [localTab, setLocalTab] = useState("data");
@@ -37,17 +39,14 @@ export default function SectionView({
   const [tableData, setTableData] = useState(null); // { rows, columns }
   const [excludedStations, setExcludedStations] = useState([]);
   const [sectionThickness, setSectionThickness] = useState(() => section?.thickness ?? 10);
-  const [hiddenColumns, setHiddenColumns] = useState(() => {
+  const [localHiddenColumns, setLocalHiddenColumns] = useState(() => {
     try {
-      if (section?.id) {
-        const item = localStorage.getItem(`fwd_hidden_cols_${section.id}`);
-        if (item) return JSON.parse(item);
-      }
-      const globalItem = localStorage.getItem("fwd_default_hidden_cols");
-      if (globalItem) return JSON.parse(globalItem);
+      const saved = localStorage.getItem("fwd_user_hidden_columns");
+      if (saved) return JSON.parse(saved);
     } catch {}
     return { data: [], normalized: [] };
   });
+  const hiddenColumns = propHiddenColumns ?? localHiddenColumns;
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState("A");
@@ -138,26 +137,23 @@ export default function SectionView({
   };
 
   const handleUpdateHiddenColumns = async (nextHidden) => {
-    setHiddenColumns(nextHidden);
-    try {
-      if (section?.id) {
-        localStorage.setItem(`fwd_hidden_cols_${section.id}`, JSON.stringify(nextHidden));
+    if (propOnUpdateHiddenColumns) {
+      await propOnUpdateHiddenColumns(nextHidden);
+    } else {
+      setLocalHiddenColumns(nextHidden);
+      try {
+        localStorage.setItem("fwd_user_hidden_columns", JSON.stringify(nextHidden));
+      } catch {}
+      if (user?.uid) {
+        saveUserHiddenColumns(user.uid, nextHidden).catch(() => {});
       }
-    } catch {}
+    }
 
     if (user?.uid && project?.id && section?.id) {
-      await updateSectionHiddenColumns(user.uid, project.id, section.id, nextHidden).catch((err) =>
+      updateSectionHiddenColumns(user.uid, project.id, section.id, nextHidden).catch((err) =>
         console.error("Failed to save hidden columns to section:", err)
       );
     }
-  };
-
-  const handleSaveHiddenColumnsAsDefault = async () => {
-    if (!user?.uid) return;
-    try {
-      localStorage.setItem("fwd_default_hidden_cols", JSON.stringify(hiddenColumns));
-    } catch {}
-    await saveUserDefaultHiddenColumns(user.uid, hiddenColumns);
   };
 
   const handleImported = () => {
