@@ -1231,17 +1231,20 @@ export default function MapView({
             >
               ↻
             </button>
-            {normalizedBearing !== 0 && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleResetRotation}
-                title="Reset to North (0°)"
-                style={{ fontWeight: 600 }}
-              >
-                Reset
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={normalizedBearing === 0}
+              onClick={handleResetRotation}
+              title={normalizedBearing === 0 ? "Already aligned to North (0°)" : "Reset rotation to North (0°)"}
+              style={{
+                fontWeight: 600,
+                opacity: normalizedBearing === 0 ? 0.45 : 1,
+                cursor: normalizedBearing === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              Reset
+            </button>
           </div>
 
           <div style={{ display: "flex", gap: 2 }}>
