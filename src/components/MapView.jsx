@@ -38,6 +38,34 @@ function getDmiValue(row) {
   return null;
 }
 
+// Compute forward road bearing (azimuth 0-360 deg) between stations
+function getStationHeading(points, currentIdx) {
+  if (!points || points.length === 0) return 0;
+  let p1, p2;
+  if (currentIdx < points.length - 1) {
+    p1 = points[currentIdx];
+    p2 = points[currentIdx + 1];
+  } else if (currentIdx > 0) {
+    p1 = points[currentIdx - 1];
+    p2 = points[currentIdx];
+  } else {
+    return 0;
+  }
+  const lat1 = (p1.lat * Math.PI) / 180;
+  const lat2 = (p2.lat * Math.PI) / 180;
+  const dLng = ((p2.lng - p1.lng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return Math.round((brng + 360) % 360);
+}
+
+// Official Google Street View URL schema with viewpoint coordinates and forward road heading
+function openGoogleStreetView(lat, lng, heading = 0) {
+  const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}&heading=${heading}&pitch=0`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 const COLOR_OPTIONS = [
   { label: "Cyan", value: "#06b6d4" },
   { label: "Amber", value: "#f59e0b" },
@@ -90,6 +118,12 @@ export default function MapView({
   const [activeStationId, setActiveStationId] = useState(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [chartWidth, setChartWidth] = useState(1200);
+
+  // Street View & Pegman states
+  const [streetViewTarget, setStreetViewTarget] = useState(null);
+  const [isPegmanMode, setIsPegmanMode] = useState(false);
+  const isPegmanModeRef = useRef(isPegmanMode);
+  isPegmanModeRef.current = isPegmanMode;
 
   // Dynamic wide-format chart measurement via ResizeObserver
   useEffect(() => {
@@ -321,7 +355,10 @@ export default function MapView({
   useEffect(() => {
     if (!mapContainer.current || validPoints.length === 0) return;
 
-    const isSat = mapType === "satellite";
+    const isEsri = mapType === "satellite";
+    const isGoogle = mapType === "google-satellite";
+    const isStreets = mapType === "streets";
+    const isSat = isEsri || isGoogle;
 
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
@@ -344,6 +381,14 @@ export default function MapView({
             tileSize: 256,
             maxzoom: 19,
           },
+          googleSatellite: {
+            type: "raster",
+            tiles: [
+              "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            ],
+            tileSize: 256,
+            maxzoom: 20,
+          },
           osmStreets: {
             type: "raster",
             tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
@@ -353,36 +398,60 @@ export default function MapView({
         },
         layers: [
           {
-            id: "satellite-layer",
+            id: "esri-satellite-layer",
             type: "raster",
             source: "esriSatellite",
-            layout: { visibility: isSat ? "visible" : "none" },
+            layout: { visibility: isEsri ? "visible" : "none" },
           },
           {
-            id: "satellite-labels",
+            id: "esri-satellite-labels",
             type: "raster",
             source: "esriLabels",
-            layout: { visibility: isSat ? "visible" : "none" },
+            layout: { visibility: isEsri ? "visible" : "none" },
+          },
+          {
+            id: "google-satellite-layer",
+            type: "raster",
+            source: "googleSatellite",
+            layout: { visibility: isGoogle ? "visible" : "none" },
           },
           {
             id: "streets-layer",
             type: "raster",
             source: "osmStreets",
-            layout: { visibility: !isSat ? "visible" : "none" },
+            layout: { visibility: isStreets ? "visible" : "none" },
           },
         ],
       },
       center: initialCenter,
       zoom: 15,
+      maxZoom: 22,
       bearing: 0,
       pitch: 0,
       dragRotate: true,
       touchPitch: false,
     });
 
-    // Reduce zoom sensitivity by ~4x for high-precision alignment with the profile chart
-    mapInstance.scrollZoom.setWheelZoomRate(1 / 1800);
-    mapInstance.scrollZoom.setZoomRate(1 / 350);
+    // Disable default incremental double-click zoom to allow direct zoom into road surface
+    mapInstance.doubleClickZoom.disable();
+
+    // Natural, responsive scroll wheel zoom so users don't have to scroll dozens of times
+    mapInstance.scrollZoom.setWheelZoomRate(1 / 450);
+    mapInstance.scrollZoom.setZoomRate(1 / 180);
+
+    // Double-click zoom handler: zooms way in to road surface (19.5z)
+    mapInstance.on("dblclick", (e) => {
+      const currentZ = mapInstance.getZoom();
+      if (currentZ < 18.5) {
+        mapInstance.flyTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: 19.5, duration: 750 });
+      } else {
+        if (bounds) {
+          mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
+        } else {
+          mapInstance.flyTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: 15, duration: 600 });
+        }
+      }
+    });
 
     mapInstance.on("rotate", () => {
       setBearing(Math.round(mapInstance.getBearing()));
@@ -438,7 +507,7 @@ export default function MapView({
       el.style.display = "flex";
       el.style.alignItems = "center";
       el.style.justifyContent = "center";
-      el.style.cursor = "pointer";
+      el.style.cursor = isPegmanModeRef.current ? "crosshair" : "pointer";
 
       // Inner dot element that safely transforms without displacing the marker
       const dot = document.createElement("div");
@@ -452,7 +521,7 @@ export default function MapView({
       dot.style.transition = "transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease";
       el.appendChild(dot);
 
-      el.title = `Station ${pt.StationID}`;
+      el.title = `Station ${pt.StationID} (Double-click to zoom in to road)`;
 
       // Bi-directional link: hovering/clicking marker updates chart
       el.addEventListener("mouseenter", () => {
@@ -461,22 +530,81 @@ export default function MapView({
       el.addEventListener("mouseleave", () => {
         setHoveredStationId(null);
       });
-      el.addEventListener("click", () => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
         setActiveStationId(pt.StationID);
+        if (isPegmanModeRef.current) {
+          handleOpenStreetView(pt);
+          setIsPegmanMode(false);
+        }
       });
 
-      const popup = new maplibregl.Popup({ offset: dotRadius + 4 }).setHTML(`
-        <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.5; min-width: 150px; color: #111827;">
-          <div style="font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-bottom: 4px;">
-            Station ${pt.StationID}
-          </div>
-          <div><strong>Drop:</strong> ${pt.DropID ?? "—"} (${selectedVariant})</div>
-          ${pt.Force != null ? `<div><strong>Force:</strong> ${Number(pt.Force).toFixed(0)} lbs</div>` : ""}
-          ${pt.D1 != null ? `<div><strong>D1:</strong> ${Number(pt.D1).toFixed(2)} mils</div>` : ""}
-          <div><strong>Lat:</strong> ${pt.lat.toFixed(6)}</div>
-          <div><strong>Lon:</strong> ${pt.lng.toFixed(6)}</div>
+      // Double-click marker: zooms way in to road surface (19.5z)
+      el.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        const currentZ = mapInstance.getZoom();
+        if (currentZ < 18.5) {
+          mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 19.5, duration: 750 });
+          setActiveStationId(pt.StationID);
+        } else {
+          if (bounds) {
+            mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
+          } else {
+            mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 15, duration: 600 });
+          }
+        }
+      });
+
+      // Build interactive popup with Street View & Zoom buttons
+      const popupContent = document.createElement("div");
+      popupContent.style.fontFamily = "Arial, sans-serif";
+      popupContent.style.fontSize = "12px";
+      popupContent.style.lineHeight = "1.5";
+      popupContent.style.minWidth = "175px";
+      popupContent.style.color = "#111827";
+
+      popupContent.innerHTML = `
+        <div style="font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+          <span>Station ${pt.StationID}</span>
+          <span style="font-size: 11px; font-weight: 500; color: #6b7280;">DMI: ${pt.dmi} ft</span>
         </div>
-      `);
+        <div><strong>Drop:</strong> ${pt.DropID ?? "—"} (${selectedVariant})</div>
+        ${pt.Force != null ? `<div><strong>Force:</strong> ${Number(pt.Force).toFixed(0)} lbs</div>` : ""}
+        ${pt.D1 != null ? `<div><strong>D1:</strong> ${Number(pt.D1).toFixed(2)} mils</div>` : ""}
+        <div><strong>Lat:</strong> ${pt.lat.toFixed(6)}</div>
+        <div><strong>Lon:</strong> ${pt.lng.toFixed(6)}</div>
+        <div style="margin-top: 8px; display: flex; gap: 4px;">
+          <button
+            class="popup-sv-btn"
+            style="flex: 1; padding: 6px 8px; font-size: 11px; font-weight: 700; background: #2563eb; color: #ffffff; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
+            title="Open Google Street View for Station ${pt.StationID}"
+          >
+            <span>🚶‍♂️</span> Street View
+          </button>
+          <button
+            class="popup-zoom-btn"
+            style="padding: 6px 8px; font-size: 11px; font-weight: 700; background: #f3f4f6; color: #111827; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
+            title="Double-click marker or click here to zoom way in to road surface (19.5z)"
+          >
+            🔍 Road
+          </button>
+        </div>
+      `;
+
+      const svBtn = popupContent.querySelector(".popup-sv-btn");
+      if (svBtn) {
+        svBtn.addEventListener("click", () => {
+          handleOpenStreetView(pt);
+        });
+      }
+      const zoomBtn = popupContent.querySelector(".popup-zoom-btn");
+      if (zoomBtn) {
+        zoomBtn.addEventListener("click", () => {
+          mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 19.5, duration: 750 });
+        });
+      }
+
+      const popup = new maplibregl.Popup({ offset: dotRadius + 4 }).setDOMContent(popupContent);
 
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([pt.lng, pt.lat])
@@ -498,26 +626,26 @@ export default function MapView({
     };
   }, [validPoints.length]);
 
-  // Update map layer on mapType change (Satellite vs Streets)
+  // Update map layer on mapType change (Satellite vs Google Satellite vs Streets)
   useEffect(() => {
     if (!map.current || !map.current.isStyleLoaded()) return;
-    const isSat = mapType === "satellite";
+    const isEsri = mapType === "satellite";
+    const isGoogle = mapType === "google-satellite";
+    const isStreets = mapType === "streets";
+    const isSat = isEsri || isGoogle;
 
-    map.current.setLayoutProperty(
-      "satellite-layer",
-      "visibility",
-      isSat ? "visible" : "none"
-    );
-    map.current.setLayoutProperty(
-      "satellite-labels",
-      "visibility",
-      isSat ? "visible" : "none"
-    );
-    map.current.setLayoutProperty(
-      "streets-layer",
-      "visibility",
-      !isSat ? "visible" : "none"
-    );
+    if (map.current.getLayer("esri-satellite-layer")) {
+      map.current.setLayoutProperty("esri-satellite-layer", "visibility", isEsri ? "visible" : "none");
+    }
+    if (map.current.getLayer("esri-satellite-labels")) {
+      map.current.setLayoutProperty("esri-satellite-labels", "visibility", isEsri ? "visible" : "none");
+    }
+    if (map.current.getLayer("google-satellite-layer")) {
+      map.current.setLayoutProperty("google-satellite-layer", "visibility", isGoogle ? "visible" : "none");
+    }
+    if (map.current.getLayer("streets-layer")) {
+      map.current.setLayoutProperty("streets-layer", "visibility", isStreets ? "visible" : "none");
+    }
 
     // Update alignment line color
     if (map.current.getLayer("survey-line-layer")) {
@@ -532,7 +660,7 @@ export default function MapView({
   // Synchronized visual highlighting of map markers on hover or selection
   // Scales only the inner dot element so coordinates NEVER jump!
   useEffect(() => {
-    const isSat = mapType === "satellite";
+    const isSat = mapType === "satellite" || mapType === "google-satellite";
     markersRef.current.forEach((marker) => {
       const dot = marker._dot;
       const el = marker.getElement();
@@ -710,6 +838,109 @@ export default function MapView({
     }
   };
 
+  // Double-clicking chart point zooms way in to road surface on map
+  const handleChartDoubleClick = () => {
+    if (activeHoverPoint && map.current) {
+      const currentZ = map.current.getZoom();
+      if (currentZ < 18.5) {
+        map.current.flyTo({ center: [activeHoverPoint.lng, activeHoverPoint.lat], zoom: 19.5, duration: 750 });
+        setActiveStationId(activeHoverPoint.stationId);
+      } else {
+        if (bounds) {
+          map.current.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
+        }
+      }
+    }
+  };
+
+  const currentTargetIndex = useMemo(() => {
+    if (!streetViewTarget) return -1;
+    return validPoints.findIndex((p) => p.StationID === streetViewTarget.StationID);
+  }, [streetViewTarget, validPoints]);
+
+  const handleOpenStreetView = (pointOrId) => {
+    let target = null;
+    if (typeof pointOrId === "object" && pointOrId !== null) {
+      target = pointOrId;
+    } else {
+      target = validPoints.find((p) => p.StationID === pointOrId);
+    }
+    if (!target && validPoints.length > 0) {
+      target = validPoints[0];
+    }
+    if (target) {
+      setStreetViewTarget(target);
+      setActiveStationId(target.StationID);
+      const targetIdx = validPoints.findIndex((p) => p.StationID === target.StationID);
+      const heading = getStationHeading(validPoints, targetIdx >= 0 ? targetIdx : 0);
+      openGoogleStreetView(target.lat, target.lng, heading);
+    }
+  };
+
+  const handleToolbarStreetView = () => {
+    if (activeStationId) {
+      const pt = validPoints.find((p) => p.StationID === activeStationId);
+      if (pt) {
+        handleOpenStreetView(pt);
+        return;
+      }
+    }
+    setIsPegmanMode((v) => !v);
+  };
+
+  const handleToggleRoadZoom = () => {
+    if (!map.current) return;
+    const currentZ = map.current.getZoom();
+    if (currentZ < 18.5) {
+      const targetPt =
+        (activeStationId && validPoints.find((p) => p.StationID === activeStationId)) ||
+        (hoveredStationId && validPoints.find((p) => p.StationID === hoveredStationId)) ||
+        null;
+      if (targetPt) {
+        map.current.flyTo({ center: [targetPt.lng, targetPt.lat], zoom: 19.5, duration: 750 });
+      } else {
+        const c = map.current.getCenter();
+        map.current.flyTo({ center: [c.lng, c.lat], zoom: 19.5, duration: 750 });
+      }
+    } else {
+      if (bounds) {
+        map.current.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
+      } else {
+        map.current.zoomTo(15, { duration: 600 });
+      }
+    }
+  };
+
+  // Keyboard navigation for Street View Modal (Esc to close, Left/Right arrows to step stations)
+  useEffect(() => {
+    if (!streetViewTarget) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setStreetViewTarget(null);
+      } else if (e.key === "ArrowLeft") {
+        if (currentTargetIndex > 0) {
+          const prev = validPoints[currentTargetIndex - 1];
+          setStreetViewTarget(prev);
+          setActiveStationId(prev.StationID);
+          if (map.current) {
+            map.current.easeTo({ center: [prev.lng, prev.lat], duration: 350 });
+          }
+        }
+      } else if (e.key === "ArrowRight") {
+        if (currentTargetIndex < validPoints.length - 1) {
+          const next = validPoints[currentTargetIndex + 1];
+          setStreetViewTarget(next);
+          setActiveStationId(next.StationID);
+          if (map.current) {
+            map.current.easeTo({ center: [next.lng, next.lat], duration: 350 });
+          }
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [streetViewTarget, currentTargetIndex, validPoints]);
+
   if (validPoints.length === 0) {
     return (
       <div className="empty-state">
@@ -723,7 +954,7 @@ export default function MapView({
     );
   }
 
-  const isSat = mapType === "satellite";
+  const isSat = mapType === "satellite" || mapType === "google-satellite";
   const normalizedBearing = ((bearing % 360) + 360) % 360;
 
   // Active hover point derived from either chart hover or map hover
@@ -747,7 +978,7 @@ export default function MapView({
     >
       {/* Top Map Toolbar */}
       <div className="map-toolbar">
-        {/* Left: Section tag, count, and Deflection Profile Toggle */}
+        {/* Left: Section tag, count, Profile Toggle, Street View & Road Zoom */}
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", flexWrap: "wrap" }}>
           <span className="badge badge-dark">Drop {selectedVariant}</span>
           <span style={{ fontSize: 13, fontWeight: 500 }}>
@@ -761,6 +992,42 @@ export default function MapView({
             style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
           >
             <span>📈</span> {showProfile ? "Hide Profile" : "Deflection Profile"}
+          </button>
+
+          {/* Pegman Street View Action Button */}
+          <button
+            type="button"
+            className={`btn btn-sm ${isPegmanMode ? "btn-warning" : "btn-secondary"}`}
+            onClick={handleToolbarStreetView}
+            title={
+              activeStationId
+                ? `Open Google Street View for Station ${activeStationId}`
+                : "Open Street View or click any station point"
+            }
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontWeight: 700,
+              backgroundColor: isPegmanMode ? "#fbbf24" : undefined,
+              color: isPegmanMode ? "#78350f" : undefined,
+              borderColor: isPegmanMode ? "#f59e0b" : undefined,
+            }}
+          >
+            <span style={{ fontSize: 15 }}>🚶‍♂️</span>
+            <span>{activeStationId ? `Street View (Stn ${activeStationId})` : "Street View"}</span>
+          </button>
+
+          {/* Quick Double-Click Zoom to Road Surface (19.5z) */}
+          <button
+            type="button"
+            className={`btn btn-sm ${currentZoom >= 18.5 ? "btn-primary" : "btn-secondary"}`}
+            onClick={handleToggleRoadZoom}
+            title="Double-click map or click here to zoom way in to road surface (19.5z)"
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600 }}
+          >
+            <span>🔍</span>
+            <span>{currentZoom >= 18.5 ? "Survey View" : "Road Surface"}</span>
           </button>
         </div>
 
@@ -921,15 +1188,25 @@ export default function MapView({
           <div style={{ display: "flex", gap: 2 }}>
             <button
               type="button"
-              className={`btn btn-sm ${isSat ? "btn-primary" : "btn-secondary"}`}
+              className={`btn btn-sm ${mapType === "satellite" ? "btn-primary" : "btn-secondary"}`}
               onClick={() => setMapType("satellite")}
+              title="Esri World Imagery Satellite"
             >
               🛰️ Satellite
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${!isSat ? "btn-primary" : "btn-secondary"}`}
+              className={`btn btn-sm ${mapType === "google-satellite" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setMapType("google-satellite")}
+              title="Google Hybrid Satellite (High-Res Road Surface)"
+            >
+              🌎 Google Sat
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${mapType === "streets" ? "btn-primary" : "btn-secondary"}`}
               onClick={() => setMapType("streets")}
+              title="OpenStreetMap Streets"
             >
               🗺️ Streets
             </button>
@@ -958,8 +1235,50 @@ export default function MapView({
             overflow: "hidden",
           }}
         >
+          {/* Pegman Mode Active Indicator Banner */}
+          {isPegmanMode && (
+            <div
+              style={{
+                position: "absolute",
+                top: 10,
+                left: "50%",
+                transform: "translateX(-50%)",
+                zIndex: 100,
+                background: "#fbbf24",
+                color: "#78350f",
+                padding: "6px 16px",
+                borderRadius: "var(--r-md)",
+                fontSize: 12,
+                fontWeight: 700,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                border: "1px solid #f59e0b",
+              }}
+            >
+              <span>🚶 Pegman Mode: Click any station marker on the map to open Street View</span>
+              <button
+                type="button"
+                onClick={() => setIsPegmanMode(false)}
+                style={{
+                  background: "#78350f",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* Synchronized Hover HUD Callout Pill over Map */}
-          {activeHoverPoint && (
+          {!isPegmanMode && activeHoverPoint && (
             <div
               style={{
                 position: "absolute",
@@ -975,7 +1294,6 @@ export default function MapView({
                 fontWeight: 600,
                 letterSpacing: "0.2px",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-                pointerEvents: "none",
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
@@ -989,8 +1307,76 @@ export default function MapView({
               <span style={{ color: "#38bdf8" }}>
                 {activeSensor}: {activeHoverPoint.val.toFixed(2)} mils
               </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const pt = validPoints.find((p) => p.StationID === activeHoverPoint.stationId);
+                  if (pt) handleOpenStreetView(pt);
+                }}
+                style={{
+                  background: "#2563eb",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  marginLeft: 4,
+                }}
+                title="Open Google Street View for this station"
+              >
+                🚶‍♂️ Street View
+              </button>
             </div>
           )}
+
+          {/* Floating Interactive Pegman Button */}
+          <div
+            className="map-pegman-btn"
+            onClick={() => {
+              const target =
+                (activeStationId && validPoints.find((p) => p.StationID === activeStationId)) ||
+                (hoveredStationId && validPoints.find((p) => p.StationID === hoveredStationId)) ||
+                validPoints[0];
+              if (target) {
+                handleOpenStreetView(target);
+              }
+            }}
+            title="Click to open Google Street View for selected station"
+            style={{
+              position: "absolute",
+              top: 86,
+              right: 16,
+              zIndex: 1000,
+              background: "rgba(255, 255, 255, 0.95)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "50%",
+              width: 40,
+              height: 40,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+              fontSize: 22,
+              transition: "transform 0.15s ease, box-shadow 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "scale(1.12)";
+              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "scale(1)";
+              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.2)";
+            }}
+          >
+            🚶‍♂️
+          </div>
 
           {/* Floating Interactive Cardinal Compass Rose */}
           <div
@@ -1232,6 +1618,7 @@ export default function MapView({
                       setHoveredStationId(null);
                     }}
                     onClick={handleChartClick}
+                    onDoubleClick={handleChartDoubleClick}
                   >
                     {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
                     {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
@@ -1499,6 +1886,250 @@ export default function MapView({
           </div>
         )}
       </div>
+
+      {/* Interactive Google Street View Modal */}
+      {streetViewTarget && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0, 0, 0, 0.65)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "var(--sp-4)",
+          }}
+          onClick={() => setStreetViewTarget(null)}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "var(--r-lg)",
+              maxWidth: 540,
+              width: "100%",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid var(--border-default)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "14px 20px",
+                borderBottom: "1px solid var(--border-subtle)",
+                background: "#f9fafb",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    background: "#fef3c7",
+                    border: "1px solid #f59e0b",
+                    fontSize: 18,
+                  }}
+                >
+                  🚶‍♂️
+                </span>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>
+                    Street View — Station {streetViewTarget.StationID}
+                  </h3>
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>
+                    {sectionName ? `${sectionName} • ` : ""}Drop {selectedVariant}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setStreetViewTarget(null)}
+                style={{ fontSize: 16, padding: "4px 8px", color: "#6b7280" }}
+                title="Close (Esc)"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Station Metrics Grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  gap: 10,
+                  background: "#f9fafb",
+                  padding: 12,
+                  borderRadius: 8,
+                  border: "1px solid var(--border-subtle)",
+                  fontSize: 12.5,
+                }}
+              >
+                <div>
+                  <span style={{ color: "#6b7280", display: "block", fontSize: 11, fontWeight: 600 }}>GPS COORDINATES</span>
+                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 600, color: "#111827" }}>
+                    {streetViewTarget.lat.toFixed(6)}, {streetViewTarget.lng.toFixed(6)}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280", display: "block", fontSize: 11, fontWeight: 600 }}>ROAD HEADING (FORWARD)</span>
+                  <span style={{ fontWeight: 600, color: "#111827", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        transform: `rotate(${getStationHeading(validPoints, currentTargetIndex)}deg)`,
+                        transition: "transform 0.2s ease",
+                      }}
+                    >
+                      ⬆
+                    </span>
+                    {getStationHeading(validPoints, currentTargetIndex)}° Azimuth
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280", display: "block", fontSize: 11, fontWeight: 600 }}>DMI DISTANCE</span>
+                  <span style={{ fontWeight: 600, color: "#111827" }}>
+                    {streetViewTarget.dmi?.toLocaleString() ?? "—"} ft
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: "#6b7280", display: "block", fontSize: 11, fontWeight: 600 }}>DEFLECTION ({activeSensor})</span>
+                  <span style={{ fontWeight: 600, color: "#2563eb" }}>
+                    {Number(streetViewTarget[activeSensor] ?? streetViewTarget.D1 ?? 0).toFixed(2)} mils
+                  </span>
+                </div>
+              </div>
+
+              {/* Primary Action Button: Launch Google Street View */}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  const heading = getStationHeading(validPoints, currentTargetIndex);
+                  openGoogleStreetView(streetViewTarget.lat, streetViewTarget.lng, heading);
+                }}
+                style={{
+                  padding: "12px 18px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  backgroundColor: "#1a73e8",
+                  borderColor: "#1a73e8",
+                  color: "#ffffff",
+                  boxShadow: "0 2px 6px rgba(26, 115, 232, 0.4)",
+                  cursor: "pointer",
+                }}
+              >
+                <span>🌐</span>
+                <span>Open in Google Street View (Full 360° Panorama)</span>
+                <span>↗</span>
+              </button>
+
+              {/* Station Stepper (Walk down the road) */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingTop: 8,
+                  borderTop: "1px solid var(--border-subtle)",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={currentTargetIndex <= 0}
+                  onClick={() => {
+                    if (currentTargetIndex > 0) {
+                      const prev = validPoints[currentTargetIndex - 1];
+                      setStreetViewTarget(prev);
+                      setActiveStationId(prev.StationID);
+                      if (map.current) {
+                        map.current.easeTo({ center: [prev.lng, prev.lat], duration: 400 });
+                      }
+                    }
+                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  <span>◀</span> Previous Station
+                </button>
+
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>
+                  Station {currentTargetIndex + 1} of {validPoints.length}
+                </span>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={currentTargetIndex >= validPoints.length - 1}
+                  onClick={() => {
+                    if (currentTargetIndex < validPoints.length - 1) {
+                      const next = validPoints[currentTargetIndex + 1];
+                      setStreetViewTarget(next);
+                      setActiveStationId(next.StationID);
+                      if (map.current) {
+                        map.current.easeTo({ center: [next.lng, next.lat], duration: 400 });
+                      }
+                    }
+                  }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                >
+                  Next Station <span>▶</span>
+                </button>
+              </div>
+
+              {/* Secondary links: Copy link & Zoom to station on map */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    const heading = getStationHeading(validPoints, currentTargetIndex);
+                    const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${streetViewTarget.lat},${streetViewTarget.lng}&heading=${heading}&pitch=0`;
+                    navigator.clipboard.writeText(url);
+                    show?.("Street View link copied to clipboard!", "success");
+                  }}
+                >
+                  📋 Copy Street View Link
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    if (map.current) {
+                      map.current.flyTo({
+                        center: [streetViewTarget.lng, streetViewTarget.lat],
+                        zoom: 19.5,
+                        duration: 750,
+                      });
+                      setStreetViewTarget(null);
+                    }
+                  }}
+                >
+                  🔍 Zoom Road Surface
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
