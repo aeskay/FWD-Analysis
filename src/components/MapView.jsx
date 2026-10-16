@@ -361,12 +361,14 @@ export default function MapView({
         const lng = getCoordinate(r.Longitude ?? r.longitude ?? r.LON ?? r.Long ?? r.Lng);
         if (lat !== null && lng !== null && lat !== 0 && lng !== 0) {
           const dmi = getDmiValue(r);
+          const stnId = r.StationID ?? r.stationId ?? r.stationid ?? r.Station ?? idx + 1;
           return {
             ...r,
             lat,
             lng,
             dmi: dmi ?? idx + 1,
-            stationId: r.StationID ?? idx + 1,
+            StationID: stnId,
+            stationId: stnId,
             index: idx + 1,
           };
         }
@@ -545,6 +547,108 @@ export default function MapView({
     }
   }, [showProfile, streetViewActive]);
 
+  // Synchronized refs to avoid stale closures in event listeners
+  const streetViewActiveRef = useRef(streetViewActive);
+  streetViewActiveRef.current = streetViewActive;
+
+  const streetViewStationRef = useRef(streetViewStation);
+  streetViewStationRef.current = streetViewStation;
+
+  const validPointsRef = useRef(validPoints);
+  validPointsRef.current = validPoints;
+
+  const activeSensorRef = useRef(activeSensor);
+  activeSensorRef.current = activeSensor;
+
+  const fetchPanoTimelineRef = useRef(fetchPanoTimeline);
+  fetchPanoTimelineRef.current = fetchPanoTimeline;
+
+  // Open Street View for a given point or ID
+  const handleOpenStreetView = useCallback((pointOrId) => {
+    let target = null;
+    const pts = validPointsRef.current;
+    if (typeof pointOrId === "object" && pointOrId !== null) {
+      target = pointOrId;
+    } else {
+      target = pts.find(
+        (p) => String(p.StationID ?? p.stationId) === String(pointOrId)
+      );
+    }
+    if (!target && pts.length > 0) {
+      target = pts[0];
+    }
+    if (target) {
+      setStreetViewStation(target);
+      setStreetViewActive(true);
+      setActiveStationId(target.StationID ?? target.stationId);
+
+      const targetIdx = pts.findIndex(
+        (p) => String(p.StationID ?? p.stationId) === String(target.StationID ?? target.stationId)
+      );
+      const heading = getStationHeading(pts, targetIdx >= 0 ? targetIdx : 0);
+
+      if (panoramaInstance.current) {
+        panoramaInstance.current.setPosition({ lat: target.lat, lng: target.lng });
+        panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
+      }
+      if (fetchPanoTimelineRef.current) {
+        fetchPanoTimelineRef.current(null, { lat: target.lat, lng: target.lng });
+      }
+      if (map.current) {
+        map.current.easeTo({ center: [target.lng, target.lat], duration: 400 });
+      }
+      markersRef.current.forEach((m) => m.getPopup()?.remove());
+    }
+  }, []);
+
+  const handleOpenStreetViewRef = useRef(handleOpenStreetView);
+  handleOpenStreetViewRef.current = handleOpenStreetView;
+
+  // Click on a station marker: navigates Street View if active or pegman mode, otherwise toggles popup
+  const handleMarkerClick = useCallback((pt) => {
+    if (!pt) return;
+    const stId = pt.StationID ?? pt.stationId;
+    setActiveStationId(stId);
+
+    if (isPegmanModeRef.current) {
+      handleOpenStreetView(pt);
+      setIsPegmanMode(false);
+      return;
+    }
+
+    if (streetViewActiveRef.current) {
+      setStreetViewStation(pt);
+      const pts = validPointsRef.current;
+      const targetIdx = pts.findIndex(
+        (p) => String(p.StationID ?? p.stationId) === String(stId)
+      );
+      const heading = getStationHeading(pts, targetIdx >= 0 ? targetIdx : 0);
+
+      if (panoramaInstance.current) {
+        panoramaInstance.current.setPosition({ lat: pt.lat, lng: pt.lng });
+        panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
+      }
+      if (fetchPanoTimelineRef.current) {
+        fetchPanoTimelineRef.current(null, { lat: pt.lat, lng: pt.lng });
+      }
+      if (map.current) {
+        map.current.easeTo({ center: [pt.lng, pt.lat], duration: 400 });
+      }
+      // Close any open popups so they don't block the map during split view
+      markersRef.current.forEach((m) => m.getPopup()?.remove());
+    } else {
+      const marker = markersRef.current.find(
+        (m) => String(m._stationId) === String(stId)
+      );
+      if (marker) {
+        marker.togglePopup();
+      }
+    }
+  }, [handleOpenStreetView]);
+
+  const handleMarkerClickRef = useRef(handleMarkerClick);
+  handleMarkerClickRef.current = handleMarkerClick;
+
   // Initialize Map
   useEffect(() => {
     if (!mapContainer.current || validPoints.length === 0) return;
@@ -626,7 +730,8 @@ export default function MapView({
       // Find closest survey station
       let closestPt = null;
       let minDistance = Infinity;
-      validPoints.forEach((pt) => {
+      const pts = validPointsRef.current;
+      pts.forEach((pt) => {
         const d = (pt.lat - lat) ** 2 + (pt.lng - lng) ** 2;
         if (d < minDistance) {
           minDistance = d;
@@ -634,8 +739,8 @@ export default function MapView({
         }
       });
 
-      const targetIdx = closestPt ? validPoints.indexOf(closestPt) : 0;
-      const heading = getStationHeading(validPoints, targetIdx);
+      const targetIdx = closestPt ? pts.indexOf(closestPt) : 0;
+      const heading = getStationHeading(pts, targetIdx);
 
       if (streetViewServiceRef.current && panoramaInstance.current) {
         streetViewServiceRef.current.getPanorama(
@@ -644,44 +749,54 @@ export default function MapView({
             if (status === "OK" && data?.location?.latLng) {
               const snapLat = data.location.latLng.lat();
               const snapLng = data.location.latLng.lng();
-              setStreetViewStation({
-                lat: snapLat,
-                lng: snapLng,
-                StationID: closestPt ? closestPt.StationID : "Selected",
-                dmi: closestPt ? closestPt.dmi : null,
-                [activeSensor]: closestPt ? closestPt[activeSensor] : null,
-              });
+              const targetStation = closestPt
+                ? { ...closestPt, lat: snapLat, lng: snapLng }
+                : {
+                    lat: snapLat,
+                    lng: snapLng,
+                    StationID: "Selected",
+                    stationId: "Selected",
+                    dmi: null,
+                    [activeSensorRef.current]: null,
+                  };
+              setStreetViewStation(targetStation);
               setStreetViewActive(true);
               panoramaInstance.current.setPosition(data.location.latLng);
               panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
               panoramaInstance.current.setVisible(true);
-              fetchPanoTimeline(data.location.pano, data.location.latLng);
+              if (fetchPanoTimelineRef.current) {
+                fetchPanoTimelineRef.current(data.location.pano, data.location.latLng);
+              }
             } else {
-              setStreetViewStation({
+              const targetStation = closestPt || {
                 lat,
                 lng,
-                StationID: closestPt ? closestPt.StationID : "Selected",
-                dmi: closestPt ? closestPt.dmi : null,
-                [activeSensor]: closestPt ? closestPt[activeSensor] : null,
-              });
+                StationID: "Selected",
+                stationId: "Selected",
+                dmi: null,
+                [activeSensorRef.current]: null,
+              };
+              setStreetViewStation(targetStation);
               setStreetViewActive(true);
               show?.("No Google Street View imagery within 100m of this point.", "warning");
             }
           }
         );
       } else {
-        setStreetViewStation({
+        const targetStation = closestPt || {
           lat,
           lng,
-          StationID: closestPt ? closestPt.StationID : "Selected",
-          dmi: closestPt ? closestPt.dmi : null,
-          [activeSensor]: closestPt ? closestPt[activeSensor] : null,
-        });
+          StationID: "Selected",
+          stationId: "Selected",
+          dmi: null,
+          [activeSensorRef.current]: null,
+        };
+        setStreetViewStation(targetStation);
         setStreetViewActive(true);
       }
 
       if (closestPt) {
-        setActiveStationId(closestPt.StationID);
+        setActiveStationId(closestPt.StationID ?? closestPt.stationId);
       }
     });
 
@@ -760,19 +875,15 @@ export default function MapView({
 
       // Bi-directional link: hovering/clicking marker updates chart
       el.addEventListener("mouseenter", () => {
-        setHoveredStationId(pt.StationID);
+        setHoveredStationId(pt.StationID ?? pt.stationId);
       });
       el.addEventListener("mouseleave", () => {
         setHoveredStationId(null);
       });
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        setActiveStationId(pt.StationID);
-        if (isPegmanModeRef.current) {
-          handleOpenStreetView(pt);
-          setIsPegmanMode(false);
-        } else if (streetViewActive) {
-          setStreetViewStation(pt);
+        if (handleMarkerClickRef.current) {
+          handleMarkerClickRef.current(pt);
         }
       });
 
@@ -782,7 +893,7 @@ export default function MapView({
         const currentZ = mapInstance.getZoom();
         if (currentZ < 18.5) {
           mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 19.5, duration: 750 });
-          setActiveStationId(pt.StationID);
+          setActiveStationId(pt.StationID ?? pt.stationId);
         } else {
           if (bounds) {
             mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
@@ -802,7 +913,7 @@ export default function MapView({
 
       popupContent.innerHTML = `
         <div style="font-weight: 700; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-          <span>Station ${pt.StationID}</span>
+          <span>Station ${pt.StationID ?? pt.stationId}</span>
           <span style="font-size: 11px; font-weight: 500; color: #6b7280;">DMI: ${pt.dmi} ft</span>
         </div>
         <div><strong>Drop:</strong> ${pt.DropID ?? "—"} (${selectedVariant})</div>
@@ -814,7 +925,7 @@ export default function MapView({
           <button
             class="popup-sv-btn"
             style="flex: 1; padding: 6px 8px; font-size: 11px; font-weight: 700; background: #2563eb; color: #ffffff; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;"
-            title="Open Google Street View for Station ${pt.StationID}"
+            title="Open Google Street View for Station ${pt.StationID ?? pt.stationId}"
           >
             <span>🚶‍♂️</span> Street View
           </button>
@@ -831,7 +942,9 @@ export default function MapView({
       const svBtn = popupContent.querySelector(".popup-sv-btn");
       if (svBtn) {
         svBtn.addEventListener("click", () => {
-          handleOpenStreetView(pt);
+          if (handleOpenStreetViewRef.current) {
+            handleOpenStreetViewRef.current(pt);
+          }
         });
       }
       const zoomBtn = popupContent.querySelector(".popup-zoom-btn");
@@ -996,7 +1109,9 @@ export default function MapView({
   // Sync panorama when active station / point changes
   useEffect(() => {
     if (panoramaInstance.current && streetViewStation) {
-      const targetIdx = validPoints.findIndex((p) => p.StationID === streetViewStation.StationID);
+      const targetIdx = validPoints.findIndex(
+        (p) => String(p.StationID ?? p.stationId) === String(streetViewStation.StationID ?? streetViewStation.stationId)
+      );
       const heading = getStationHeading(validPoints, targetIdx >= 0 ? targetIdx : 0);
       panoramaInstance.current.setPosition({ lat: streetViewStation.lat, lng: streetViewStation.lng });
       panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
@@ -1022,8 +1137,8 @@ export default function MapView({
       const dot = marker._dot;
       const el = marker.getElement();
       if (!dot || !el) return;
-      const isHovered = marker._stationId === hoveredStationId;
-      const isActive = marker._stationId === activeStationId;
+      const isHovered = String(marker._stationId) === String(hoveredStationId);
+      const isActive = String(marker._stationId) === String(activeStationId);
 
       if (isHovered || isActive) {
         dot.style.transform = "scale(1.3)";
@@ -1188,9 +1303,18 @@ export default function MapView({
     if (activeHoverPoint && map.current) {
       map.current.easeTo({ center: [activeHoverPoint.lng, activeHoverPoint.lat], duration: 350 });
       setActiveStationId(activeHoverPoint.stationId);
-      const marker = markersRef.current.find((m) => m._stationId === activeHoverPoint.stationId);
-      if (marker) {
-        marker.togglePopup();
+      const targetPt = validPoints.find(
+        (p) => String(p.StationID ?? p.stationId) === String(activeHoverPoint.stationId)
+      );
+      if (targetPt && streetViewActive) {
+        handleMarkerClick(targetPt);
+      } else {
+        const marker = markersRef.current.find(
+          (m) => String(m._stationId) === String(activeHoverPoint.stationId)
+        );
+        if (marker) {
+          marker.togglePopup();
+        }
       }
     }
   };
@@ -1212,25 +1336,11 @@ export default function MapView({
 
   const currentTargetIndex = useMemo(() => {
     if (!streetViewStation) return -1;
-    return validPoints.findIndex((p) => p.StationID === streetViewStation.StationID);
+    const targetId = streetViewStation.StationID ?? streetViewStation.stationId;
+    return validPoints.findIndex(
+      (p) => String(p.StationID ?? p.stationId) === String(targetId)
+    );
   }, [streetViewStation, validPoints]);
-
-  const handleOpenStreetView = (pointOrId) => {
-    let target = null;
-    if (typeof pointOrId === "object" && pointOrId !== null) {
-      target = pointOrId;
-    } else {
-      target = validPoints.find((p) => p.StationID === pointOrId);
-    }
-    if (!target && validPoints.length > 0) {
-      target = validPoints[0];
-    }
-    if (target) {
-      setStreetViewStation(target);
-      setStreetViewActive(true);
-      setActiveStationId(target.StationID);
-    }
-  };
 
   const handleToolbarStreetView = () => {
     if (streetViewActive) {
@@ -1238,8 +1348,8 @@ export default function MapView({
       return;
     }
     const pt =
-      (activeStationId && validPoints.find((p) => p.StationID === activeStationId)) ||
-      (hoveredStationId && validPoints.find((p) => p.StationID === hoveredStationId)) ||
+      (activeStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(activeStationId))) ||
+      (hoveredStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(hoveredStationId))) ||
       validPoints[0];
     if (pt) {
       handleOpenStreetView(pt);
@@ -1251,8 +1361,8 @@ export default function MapView({
     const currentZ = map.current.getZoom();
     if (currentZ < 18.5) {
       const targetPt =
-        (activeStationId && validPoints.find((p) => p.StationID === activeStationId)) ||
-        (hoveredStationId && validPoints.find((p) => p.StationID === hoveredStationId)) ||
+        (activeStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(activeStationId))) ||
+        (hoveredStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(hoveredStationId))) ||
         null;
       if (targetPt) {
         map.current.flyTo({ center: [targetPt.lng, targetPt.lat], zoom: 19.5, duration: 750 });
@@ -1278,20 +1388,12 @@ export default function MapView({
       } else if (e.key === "ArrowLeft") {
         if (currentTargetIndex > 0) {
           const prev = validPoints[currentTargetIndex - 1];
-          setStreetViewStation(prev);
-          setActiveStationId(prev.StationID);
-          if (map.current) {
-            map.current.easeTo({ center: [prev.lng, prev.lat], duration: 350 });
-          }
+          handleMarkerClick(prev);
         }
       } else if (e.key === "ArrowRight") {
         if (currentTargetIndex < validPoints.length - 1) {
           const next = validPoints[currentTargetIndex + 1];
-          setStreetViewStation(next);
-          setActiveStationId(next.StationID);
-          if (map.current) {
-            map.current.easeTo({ center: [next.lng, next.lat], duration: 350 });
-          }
+          handleMarkerClick(next);
         }
       }
     };
@@ -1652,7 +1754,7 @@ export default function MapView({
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 16 }}>🚶‍♂️</span>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>
-                    Station {streetViewStation.StationID}
+                    Station {streetViewStation.StationID ?? streetViewStation.stationId}
                   </span>
                   {currentImageYear && (
                     <span
@@ -1700,8 +1802,7 @@ export default function MapView({
                     onClick={() => {
                       if (currentTargetIndex > 0) {
                         const prev = validPoints[currentTargetIndex - 1];
-                        setStreetViewStation(prev);
-                        setActiveStationId(prev.StationID);
+                        handleMarkerClick(prev);
                       }
                     }}
                     style={{
@@ -1726,8 +1827,7 @@ export default function MapView({
                     onClick={() => {
                       if (currentTargetIndex >= 0 && currentTargetIndex < validPoints.length - 1) {
                         const next = validPoints[currentTargetIndex + 1];
-                        setStreetViewStation(next);
-                        setActiveStationId(next.StationID);
+                        handleMarkerClick(next);
                       }
                     }}
                     style={{
@@ -2047,7 +2147,9 @@ export default function MapView({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      const pt = validPoints.find((p) => p.StationID === activeHoverPoint.stationId);
+                      const pt = validPoints.find(
+                        (p) => String(p.StationID ?? p.stationId) === String(activeHoverPoint.stationId)
+                      );
                       if (pt) handleOpenStreetView(pt);
                     }}
                     style={{
@@ -2078,8 +2180,8 @@ export default function MapView({
                 className="map-pegman-btn"
                 onClick={() => {
                   const target =
-                    (activeStationId && validPoints.find((p) => p.StationID === activeStationId)) ||
-                    (hoveredStationId && validPoints.find((p) => p.StationID === hoveredStationId)) ||
+                    (activeStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(activeStationId))) ||
+                    (hoveredStationId && validPoints.find((p) => String(p.StationID ?? p.stationId) === String(hoveredStationId))) ||
                     validPoints[0];
                   if (target) {
                     handleOpenStreetView(target);
