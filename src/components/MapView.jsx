@@ -140,6 +140,11 @@ export default function MapView({
   const isPegmanModeRef = useRef(isPegmanMode);
   isPegmanModeRef.current = isPegmanMode;
 
+  // Street View 3D road markers state & ref
+  const [showPointsInStreetView, setShowPointsInStreetView] = useState(true);
+  const [panoReady, setPanoReady] = useState(false);
+  const streetMarkersRef = useRef([]);
+
   // Google Maps JS API & Historical Timeline states
   const [googleMapsReady, setGoogleMapsReady] = useState(false);
   const [availableDates, setAvailableDates] = useState([]);
@@ -1080,6 +1085,7 @@ export default function MapView({
       });
 
       panoramaInstance.current = pano;
+      setPanoReady(true);
 
       pano.addListener("position_changed", () => {
         const pos = pano.getPosition();
@@ -1103,8 +1109,103 @@ export default function MapView({
       fetchPanoTimeline(null, { lat: initialLat, lng: initialLng });
     } else {
       window.google.maps.event.trigger(panoramaInstance.current, "resize");
+      setPanoReady(true);
     }
   }, [streetViewActive, googleMapsReady, fetchPanoTimeline, validPoints, streetViewStation]);
+
+  // ── Render Station Points directly in Google Street View (3D Perspective) ───
+  useEffect(() => {
+    if (!window.google?.maps || !panoramaInstance.current) {
+      streetMarkersRef.current.forEach((m) => m.setMap(null));
+      streetMarkersRef.current = [];
+      return;
+    }
+
+    if (!streetViewActive || !showPointsInStreetView) {
+      streetMarkersRef.current.forEach((m) => m.setMap(null));
+      return;
+    }
+
+    // If markers already exist for all validPoints, simply update visibility, icon and z-index
+    if (streetMarkersRef.current.length === validPoints.length && streetMarkersRef.current.length > 0) {
+      streetMarkersRef.current.forEach((marker) => {
+        marker.setMap(panoramaInstance.current);
+        const pt = marker._point;
+        if (!pt) return;
+        const isActive = String(pt.StationID ?? pt.stationId) === String(activeStationId);
+        const isHovered = String(pt.StationID ?? pt.stationId) === String(hoveredStationId);
+
+        marker.setIcon({
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: isActive ? 13 : (isHovered ? 11 : 8.5),
+          fillColor: isActive ? "#2563eb" : (isHovered ? "#38bdf8" : dotColor),
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: isActive ? 3 : 2,
+        });
+        marker.setZIndex(isActive ? 9999 : (isHovered ? 5000 : 100));
+      });
+      return;
+    }
+
+    // Recreate markers on panorama
+    streetMarkersRef.current.forEach((m) => m.setMap(null));
+    streetMarkersRef.current = [];
+
+    const newMarkers = validPoints.map((pt) => {
+      const isActive = String(pt.StationID ?? pt.stationId) === String(activeStationId);
+      const isHovered = String(pt.StationID ?? pt.stationId) === String(hoveredStationId);
+
+      const marker = new window.google.maps.Marker({
+        position: { lat: pt.lat, lng: pt.lng },
+        map: panoramaInstance.current,
+        title: `Station ${pt.StationID ?? pt.stationId} (DMI: ${pt.dmi} ft)`,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: isActive ? 13 : (isHovered ? 11 : 8.5),
+          fillColor: isActive ? "#2563eb" : (isHovered ? "#38bdf8" : dotColor),
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: isActive ? 3 : 2,
+        },
+        label: {
+          text: String(pt.StationID ?? pt.stationId),
+          color: "#ffffff",
+          fontSize: "9px",
+          fontWeight: "bold",
+        },
+        zIndex: isActive ? 9999 : (isHovered ? 5000 : 100),
+      });
+
+      marker._point = pt;
+
+      marker.addListener("click", () => {
+        if (handleMarkerClickRef.current) {
+          handleMarkerClickRef.current(pt);
+        }
+      });
+
+      marker.addListener("mouseover", () => {
+        setHoveredStationId(pt.StationID ?? pt.stationId);
+      });
+
+      marker.addListener("mouseout", () => {
+        setHoveredStationId(null);
+      });
+
+      return marker;
+    });
+
+    streetMarkersRef.current = newMarkers;
+  }, [
+    streetViewActive,
+    showPointsInStreetView,
+    panoReady,
+    validPoints,
+    activeStationId,
+    hoveredStationId,
+    dotColor,
+  ]);
 
   // Sync panorama when active station / point changes
   useEffect(() => {
@@ -1787,10 +1888,6 @@ export default function MapView({
                       </span>
                     </>
                   )}
-                  <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
-                  <span style={{ color: "#e5e7eb", fontSize: 11, fontWeight: 600 }}>
-                    {getStationHeading(validPoints, currentTargetIndex)}° Azimuth
-                  </span>
                 </div>
 
                 {/* Center: Prev / Next Station Stepper */}
@@ -1844,8 +1941,33 @@ export default function MapView({
                   </button>
                 </div>
 
-                {/* Right: Full Tab + Close buttons */}
+                {/* Right: Points on Road Toggle + Full Tab + Close buttons */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "#e5e7eb",
+                      cursor: "pointer",
+                      background: "rgba(255, 255, 255, 0.12)",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      userSelect: "none",
+                    }}
+                    title="Show or hide FWD station points on the street in Street View"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showPointsInStreetView}
+                      onChange={(e) => setShowPointsInStreetView(e.target.checked)}
+                      style={{ cursor: "pointer", accentColor: "#3b82f6" }}
+                    />
+                    <span>Points on Road</span>
+                  </label>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
