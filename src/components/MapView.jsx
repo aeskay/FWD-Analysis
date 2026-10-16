@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useToast } from "../context/ToastContext";
+import {
+  loadGoogleMapsApi,
+  getStoredGoogleMapsApiKey,
+  getStreetViewEmbedUrl,
+} from "../utils/googleMapsLoader";
 
 // In modern Vite, point maplibregl directly to its web worker bundle URL to prevent Worker loading error
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
@@ -66,15 +71,6 @@ function openGoogleStreetView(lat, lng, heading = 0) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-// Google Street View Embed URL (supports optional API key if available, with robust fallback)
-function getStreetViewEmbedUrl(lat, lng, heading = 0) {
-  const apiKey = import.meta.env?.VITE_GOOGLE_MAPS_API_KEY;
-  if (apiKey) {
-    return `https://www.google.com/maps/embed/v1/streetview?key=${apiKey}&location=${lat},${lng}&heading=${heading}&pitch=0`;
-  }
-  return `https://maps.google.com/maps?layer=c&cbll=${lat},${lng}&cbp=11,${heading},0,0,0&output=svembed`;
-}
-
 const COLOR_OPTIONS = [
   { label: "Cyan", value: "#06b6d4" },
   { label: "Amber", value: "#f59e0b" },
@@ -111,6 +107,11 @@ export default function MapView({
   const pegmanMarkerRef = useRef(null); // Active Pegman marker on map
   const chartContainerRef = useRef(null);
   const svgRef = useRef(null);
+  const splitContainerRef = useRef(null);
+  const panoContainerRef = useRef(null);
+  const panoramaInstance = useRef(null);
+  const streetViewServiceRef = useRef(null);
+  const lastFetchedPanoRef = useRef(null);
   const { show } = useToast() || {};
 
   const [bearing, setBearing] = useState(0);
@@ -130,12 +131,193 @@ export default function MapView({
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [chartWidth, setChartWidth] = useState(1200);
 
-  // In-Map Street View & Pegman states
+  // In-Map Street View & Resizable Split View states
   const [streetViewActive, setStreetViewActive] = useState(false);
   const [streetViewStation, setStreetViewStation] = useState(null);
+  const [splitPercent, setSplitPercent] = useState(50);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const [isPegmanMode, setIsPegmanMode] = useState(false);
   const isPegmanModeRef = useRef(isPegmanMode);
   isPegmanModeRef.current = isPegmanMode;
+
+  // Google Maps JS API & Historical Timeline states
+  const [googleMapsReady, setGoogleMapsReady] = useState(false);
+  const [availableDates, setAvailableDates] = useState([]);
+  const [currentPanoId, setCurrentPanoId] = useState("");
+  const [currentImageYear, setCurrentImageYear] = useState("");
+  const [currentImageDate, setCurrentImageDate] = useState("");
+  const [isLoadingDates, setIsLoadingDates] = useState(false);
+
+  // ── Load Google Maps JS SDK for Panorama & StreetViewService ──────────────
+  useEffect(() => {
+    loadGoogleMapsApi()
+      .then((gMaps) => {
+        setGoogleMapsReady(true);
+        if (gMaps.StreetViewService) {
+          streetViewServiceRef.current = new gMaps.StreetViewService();
+        }
+      })
+      .catch((err) => {
+        console.warn("Google Maps JS API load notice (will use embed fallback):", err);
+      });
+  }, []);
+
+  // ── Fetch Street View Metadata & Historical Panoramas (data.time) ───────────
+  const fetchPanoTimeline = useCallback((panoId, latLng = null) => {
+    if (!streetViewServiceRef.current) return;
+    if (panoId && lastFetchedPanoRef.current === panoId) return;
+    if (panoId) lastFetchedPanoRef.current = panoId;
+
+    setIsLoadingDates(true);
+    const request = panoId ? { pano: panoId } : (latLng ? { location: latLng, radius: 100 } : null);
+    if (!request) {
+      setIsLoadingDates(false);
+      return;
+    }
+
+    try {
+      streetViewServiceRef.current.getPanorama(request, (data, status) => {
+        setIsLoadingDates(false);
+        if (status === "OK" && data) {
+          const activePano = data.location?.pano || panoId || "";
+          setCurrentPanoId(activePano);
+
+          const rawDate = data.imageDate || "";
+          setCurrentImageDate(rawDate);
+          const year = rawDate ? rawDate.split("-")[0] : "";
+          setCurrentImageYear(year);
+
+          // Parse historical panos from data.time (undocumented Google Street View history array)
+          const times = Array.isArray(data.time) ? data.time : [];
+          const parsed = [];
+
+          times.forEach((item) => {
+            if (!item || !item.pano) return;
+            const dateKey = Object.keys(item).find((k) => k !== "pano");
+            const val = dateKey ? item[dateKey] : null;
+            let dateObj = null;
+            if (val instanceof Date) {
+              dateObj = val;
+            } else if (val) {
+              const parsedD = new Date(val);
+              if (!isNaN(parsedD.getTime())) dateObj = parsedD;
+            }
+
+            let dStr = "";
+            let yStr = "";
+            let displayLabel = "";
+
+            if (dateObj) {
+              dStr = dateObj.toISOString().slice(0, 7);
+              yStr = String(dateObj.getFullYear());
+              displayLabel = dateObj.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+            } else if (typeof val === "string") {
+              dStr = val.slice(0, 7);
+              yStr = val.slice(0, 4);
+              displayLabel = val;
+            } else {
+              dStr = rawDate || "Historical";
+              yStr = dStr.slice(0, 4);
+              displayLabel = dStr;
+            }
+
+            parsed.push({
+              pano: item.pano,
+              date: dStr,
+              year: yStr,
+              label: displayLabel,
+            });
+          });
+
+          // Sort chronological descending (most recent first)
+          parsed.sort((a, b) => b.date.localeCompare(a.date));
+
+          // Ensure active panorama is present in the array
+          if (!parsed.some((p) => p.pano === activePano)) {
+            let currentLabel = rawDate;
+            if (rawDate && rawDate.includes("-")) {
+              const [y, m] = rawDate.split("-");
+              const d = new Date(Number(y), Number(m) - 1, 1);
+              if (!isNaN(d.getTime())) {
+                currentLabel = d.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+              }
+            }
+            parsed.unshift({
+              pano: activePano,
+              date: rawDate || "Current",
+              year: year || "",
+              label: currentLabel || rawDate || "Latest",
+            });
+          }
+
+          setAvailableDates(parsed);
+        }
+      });
+    } catch (err) {
+      console.warn("Error fetching Street View timeline metadata:", err);
+      setIsLoadingDates(false);
+    }
+  }, []);
+
+  // ── Switch Active Street View Date ──────────────────────────────────────────
+  const handleSelectDate = useCallback((targetPanoId) => {
+    if (!targetPanoId) return;
+    if (panoramaInstance.current) {
+      panoramaInstance.current.setPano(targetPanoId);
+    }
+    setCurrentPanoId(targetPanoId);
+    const match = availableDates.find((d) => d.pano === targetPanoId);
+    if (match) {
+      setCurrentImageDate(match.date);
+      setCurrentImageYear(match.year);
+    }
+  }, [availableDates]);
+
+  // ── Draggable Split Screen Resizer ──────────────────────────────────────────
+  const handleSplitPointerDown = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingSplit(true);
+
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+
+    const handlePointerMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      const currentX = moveEvent.clientX;
+      const offset = currentX - rect.left;
+      let newPct = (offset / rect.width) * 100;
+      if (newPct < 15) newPct = 15;
+      if (newPct > 85) newPct = 85;
+      setSplitPercent(Math.round(newPct));
+
+      if (map.current) {
+        map.current.resize();
+      }
+      if (panoramaInstance.current && window.google?.maps) {
+        window.google.maps.event.trigger(panoramaInstance.current, "resize");
+      }
+    };
+
+    const handlePointerUp = () => {
+      setIsDraggingSplit(false);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+
+      setTimeout(() => {
+        if (map.current) {
+          map.current.resize();
+        }
+        if (panoramaInstance.current && window.google?.maps) {
+          window.google.maps.event.trigger(panoramaInstance.current, "resize");
+        }
+      }, 50);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }, []);
 
   // Dynamic wide-format chart measurement via ResizeObserver
   useEffect(() => {
@@ -436,6 +618,73 @@ export default function MapView({
       }
     });
 
+    // Single-click on map: jump Street View to exact clicked road location
+    mapInstance.on("click", (e) => {
+      const lat = e.lngLat.lat;
+      const lng = e.lngLat.lng;
+
+      // Find closest survey station
+      let closestPt = null;
+      let minDistance = Infinity;
+      validPoints.forEach((pt) => {
+        const d = (pt.lat - lat) ** 2 + (pt.lng - lng) ** 2;
+        if (d < minDistance) {
+          minDistance = d;
+          closestPt = pt;
+        }
+      });
+
+      const targetIdx = closestPt ? validPoints.indexOf(closestPt) : 0;
+      const heading = getStationHeading(validPoints, targetIdx);
+
+      if (streetViewServiceRef.current && panoramaInstance.current) {
+        streetViewServiceRef.current.getPanorama(
+          { location: { lat, lng }, radius: 100 },
+          (data, status) => {
+            if (status === "OK" && data?.location?.latLng) {
+              const snapLat = data.location.latLng.lat();
+              const snapLng = data.location.latLng.lng();
+              setStreetViewStation({
+                lat: snapLat,
+                lng: snapLng,
+                StationID: closestPt ? closestPt.StationID : "Selected",
+                dmi: closestPt ? closestPt.dmi : null,
+                [activeSensor]: closestPt ? closestPt[activeSensor] : null,
+              });
+              setStreetViewActive(true);
+              panoramaInstance.current.setPosition(data.location.latLng);
+              panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
+              panoramaInstance.current.setVisible(true);
+              fetchPanoTimeline(data.location.pano, data.location.latLng);
+            } else {
+              setStreetViewStation({
+                lat,
+                lng,
+                StationID: closestPt ? closestPt.StationID : "Selected",
+                dmi: closestPt ? closestPt.dmi : null,
+                [activeSensor]: closestPt ? closestPt[activeSensor] : null,
+              });
+              setStreetViewActive(true);
+              show?.("No Google Street View imagery within 100m of this point.", "warning");
+            }
+          }
+        );
+      } else {
+        setStreetViewStation({
+          lat,
+          lng,
+          StationID: closestPt ? closestPt.StationID : "Selected",
+          dmi: closestPt ? closestPt.dmi : null,
+          [activeSensor]: closestPt ? closestPt[activeSensor] : null,
+        });
+        setStreetViewActive(true);
+      }
+
+      if (closestPt) {
+        setActiveStationId(closestPt.StationID);
+      }
+    });
+
     mapInstance.on("rotate", () => {
       setBearing(Math.round(mapInstance.getBearing()));
     });
@@ -691,10 +940,84 @@ export default function MapView({
     }
   }, [streetViewActive, streetViewStation]);
 
+  // ── Mount / Sync Google StreetViewPanorama in DOM ──────────────────────────
+  useEffect(() => {
+    if (!streetViewActive || !googleMapsReady || !panoContainerRef.current) return;
+    if (!window.google?.maps) return;
+
+    const initialPt = streetViewStation || validPoints[0];
+    const initialLat = initialPt ? initialPt.lat : 30;
+    const initialLng = initialPt ? initialPt.lng : -97;
+    const targetIdx = validPoints.findIndex((p) => p.StationID === (initialPt?.StationID));
+    const initialHeading = getStationHeading(validPoints, targetIdx >= 0 ? targetIdx : 0);
+
+    if (!panoramaInstance.current) {
+      const pano = new window.google.maps.StreetViewPanorama(panoContainerRef.current, {
+        position: { lat: initialLat, lng: initialLng },
+        pov: { heading: initialHeading, pitch: 0, zoom: 1 },
+        visible: true,
+        addressControl: false,
+        showRoadLabels: true,
+        motionTracking: false,
+        motionTrackingControl: false,
+        linksControl: true,
+        panControl: true,
+        enableCloseButton: false,
+        fullscreenControl: false,
+      });
+
+      panoramaInstance.current = pano;
+
+      pano.addListener("position_changed", () => {
+        const pos = pano.getPosition();
+        if (pos) {
+          const pLat = pos.lat();
+          const pLng = pos.lng();
+          if (pegmanMarkerRef.current) {
+            pegmanMarkerRef.current.setLngLat([pLng, pLat]);
+          }
+        }
+      });
+
+      pano.addListener("pano_changed", () => {
+        const pId = pano.getPano();
+        if (pId) {
+          setCurrentPanoId(pId);
+          fetchPanoTimeline(pId);
+        }
+      });
+
+      fetchPanoTimeline(null, { lat: initialLat, lng: initialLng });
+    } else {
+      window.google.maps.event.trigger(panoramaInstance.current, "resize");
+    }
+  }, [streetViewActive, googleMapsReady, fetchPanoTimeline, validPoints, streetViewStation]);
+
+  // Sync panorama when active station / point changes
+  useEffect(() => {
+    if (panoramaInstance.current && streetViewStation) {
+      const targetIdx = validPoints.findIndex((p) => p.StationID === streetViewStation.StationID);
+      const heading = getStationHeading(validPoints, targetIdx >= 0 ? targetIdx : 0);
+      panoramaInstance.current.setPosition({ lat: streetViewStation.lat, lng: streetViewStation.lng });
+      panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
+      fetchPanoTimeline(null, { lat: streetViewStation.lat, lng: streetViewStation.lng });
+    }
+  }, [streetViewStation, fetchPanoTimeline, validPoints]);
+
+  // Re-size maps when splitPercent or streetViewActive changes
+  useEffect(() => {
+    if (map.current) {
+      map.current.resize();
+    }
+    if (panoramaInstance.current && window.google?.maps) {
+      window.google.maps.event.trigger(panoramaInstance.current, "resize");
+    }
+  }, [splitPercent, streetViewActive]);
+
   // Synchronized visual highlighting of map markers on hover or selection
   // Scales only the inner dot element so coordinates NEVER jump!
   useEffect(() => {
-    const isSat = mapType === "satellite" || mapType === "google-satellite";
+    const isSat = mapType === "google-satellite";
     markersRef.current.forEach((marker) => {
       const dot = marker._dot;
       const el = marker.getElement();
@@ -1281,6 +1604,7 @@ export default function MapView({
       >
         {/* Top/Upper: Interactive Map & In-Map Street View Canvas */}
         <div
+          ref={splitContainerRef}
           style={{
             flex: showProfile ? "1 1 54%" : "1 1 100%",
             minHeight: 260,
@@ -1289,22 +1613,23 @@ export default function MapView({
             display: "flex",
             flexDirection: "row",
             overflow: "hidden",
+            userSelect: isDraggingSplit ? "none" : "auto",
           }}
         >
           {/* Left: In-Map Street View Viewport */}
           {streetViewActive && streetViewStation && (
             <div
               style={{
-                flex: "1 1 64%",
-                width: "64%",
+                width: `calc(${splitPercent}% - 5px)`,
+                flex: "none",
                 height: "100%",
                 display: "flex",
                 flexDirection: "column",
                 position: "relative",
-                borderRight: "2px solid var(--border-default)",
                 background: "#111827",
-                minWidth: 320,
+                minWidth: 260,
                 zIndex: 5,
+                overflow: "hidden",
               }}
             >
               {/* Street View Top Bar */}
@@ -1323,20 +1648,43 @@ export default function MapView({
                   zIndex: 10,
                 }}
               >
-                {/* Left: Station info */}
+                {/* Left: Station info + Year Badge */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 16 }}>🚶‍♂️</span>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>
                     Station {streetViewStation.StationID}
                   </span>
-                  <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
-                  <span style={{ color: "#9ca3af", fontSize: 11 }}>
-                    DMI: {streetViewStation.dmi?.toLocaleString()} ft
-                  </span>
-                  <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
-                  <span style={{ color: "#38bdf8", fontWeight: 600, fontSize: 11 }}>
-                    {activeSensor}: {Number(streetViewStation[activeSensor] ?? streetViewStation.D1 ?? 0).toFixed(2)} mils
-                  </span>
+                  {currentImageYear && (
+                    <span
+                      style={{
+                        background: "#0284c7",
+                        color: "#ffffff",
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 700,
+                      }}
+                      title={`Street View Imagery Year: ${currentImageYear}`}
+                    >
+                      📅 {currentImageYear}
+                    </span>
+                  )}
+                  {streetViewStation.dmi != null && (
+                    <>
+                      <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
+                      <span style={{ color: "#9ca3af", fontSize: 11 }}>
+                        DMI: {streetViewStation.dmi?.toLocaleString()} ft
+                      </span>
+                    </>
+                  )}
+                  {streetViewStation[activeSensor] != null && (
+                    <>
+                      <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
+                      <span style={{ color: "#38bdf8", fontWeight: 600, fontSize: 11 }}>
+                        {activeSensor}: {Number(streetViewStation[activeSensor] ?? streetViewStation.D1 ?? 0).toFixed(2)} mils
+                      </span>
+                    </>
+                  )}
                   <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
                   <span style={{ color: "#e5e7eb", fontSize: 11, fontWeight: 600 }}>
                     {getStationHeading(validPoints, currentTargetIndex)}° Azimuth
@@ -1369,14 +1717,14 @@ export default function MapView({
                     ◀ Prev
                   </button>
                   <span style={{ fontSize: 11, fontWeight: 600, color: "#d1d5db" }}>
-                    {currentTargetIndex + 1} / {validPoints.length}
+                    {currentTargetIndex >= 0 ? `${currentTargetIndex + 1} / ${validPoints.length}` : `Point`}
                   </span>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    disabled={currentTargetIndex >= validPoints.length - 1}
+                    disabled={currentTargetIndex < 0 || currentTargetIndex >= validPoints.length - 1}
                     onClick={() => {
-                      if (currentTargetIndex < validPoints.length - 1) {
+                      if (currentTargetIndex >= 0 && currentTargetIndex < validPoints.length - 1) {
                         const next = validPoints[currentTargetIndex + 1];
                         setStreetViewStation(next);
                         setActiveStationId(next.StationID);
@@ -1439,30 +1787,157 @@ export default function MapView({
                 </div>
               </div>
 
-              {/* Street View Iframe */}
+              {/* Panorama Container or Embed Fallback */}
               <div style={{ flex: 1, position: "relative", width: "100%", height: "100%", background: "#000" }}>
-                <iframe
-                  key={`${streetViewStation.StationID}-${currentTargetIndex}`}
-                  title={`Street View Station ${streetViewStation.StationID}`}
-                  src={getStreetViewEmbedUrl(
-                    streetViewStation.lat,
-                    streetViewStation.lng,
-                    getStationHeading(validPoints, currentTargetIndex)
-                  )}
-                  style={{ width: "100%", height: "100%", border: "none" }}
-                  loading="eager"
-                  allow="accelerometer; gyroscope; magnetometer"
-                  allowFullScreen
-                />
+                {googleMapsReady ? (
+                  <div
+                    ref={panoContainerRef}
+                    style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
+                  />
+                ) : (
+                  <iframe
+                    key={`${streetViewStation.StationID}-${currentTargetIndex}`}
+                    title={`Street View Station ${streetViewStation.StationID}`}
+                    src={getStreetViewEmbedUrl(
+                      streetViewStation.lat,
+                      streetViewStation.lng,
+                      getStationHeading(validPoints, currentTargetIndex)
+                    )}
+                    style={{ width: "100%", height: "100%", border: "none" }}
+                    loading="eager"
+                    allow="accelerometer; gyroscope; magnetometer"
+                    allowFullScreen
+                  />
+                )}
+
+                {/* Historical Street View Years Timeline Bar directly at the bottom */}
+                {availableDates.length > 0 && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 12,
+                      left: 12,
+                      right: 12,
+                      zIndex: 25,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      overflowX: "auto",
+                      padding: "6px 12px",
+                      background: "rgba(15, 23, 42, 0.88)",
+                      backdropFilter: "blur(10px)",
+                      border: "1px solid rgba(255, 255, 255, 0.18)",
+                      borderRadius: "24px",
+                      boxShadow: "0 4px 16px rgba(0, 0, 0, 0.4)",
+                      scrollbarWidth: "thin",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        paddingRight: 8,
+                        borderRight: "1px solid rgba(255, 255, 255, 0.2)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 13 }}>🕒</span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: "#94a3b8",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                        }}
+                      >
+                        Timeline:
+                      </span>
+                    </div>
+                    {availableDates.map((d) => {
+                      const isSelected = d.pano === currentPanoId;
+                      return (
+                        <button
+                          key={d.pano}
+                          type="button"
+                          onClick={() => handleSelectDate(d.pano)}
+                          style={{
+                            padding: "4px 12px",
+                            borderRadius: "16px",
+                            fontSize: 12,
+                            fontWeight: isSelected ? 700 : 500,
+                            whiteSpace: "nowrap",
+                            border: isSelected ? "1px solid #059669" : "1px solid rgba(255, 255, 255, 0.15)",
+                            background: isSelected ? "#10b981" : "rgba(255, 255, 255, 0.95)",
+                            color: isSelected ? "#ffffff" : "#0f172a",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            boxShadow: isSelected ? "0 2px 6px rgba(16, 185, 129, 0.4)" : "none",
+                            flexShrink: 0,
+                          }}
+                          title={`Switch Street View to ${d.label}`}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
+          )}
+
+          {/* Draggable Divider Splitter */}
+          {streetViewActive && (
+            <div
+              onPointerDown={handleSplitPointerDown}
+              className="split-resizer"
+              style={{
+                width: 10,
+                flex: "none",
+                cursor: "col-resize",
+                position: "relative",
+                zIndex: 25,
+                background: isDraggingSplit ? "#2563eb" : "var(--border-default)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                userSelect: "none",
+                touchAction: "none",
+              }}
+              title="Drag to resize Street View / Map ratio"
+            >
+              <div
+                style={{
+                  width: 4,
+                  height: 36,
+                  borderRadius: 2,
+                  background: isDraggingSplit ? "#ffffff" : "var(--text-muted)",
+                  opacity: 0.8,
+                }}
+              />
+            </div>
+          )}
+
+          {/* Drag Protection Overlay */}
+          {isDraggingSplit && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 9999,
+                cursor: "col-resize",
+                userSelect: "none",
+              }}
+            />
           )}
 
           {/* Right (or Full Width): Map Canvas */}
           <div
             style={{
-              flex: streetViewActive ? "0 0 36%" : "1 1 100%",
-              width: streetViewActive ? "36%" : "100%",
+              width: streetViewActive ? `calc(${100 - splitPercent}% - 5px)` : "100%",
+              flex: "none",
               height: "100%",
               position: "relative",
               overflow: "hidden",
