@@ -43,6 +43,36 @@ function getDmiValue(row) {
   return null;
 }
 
+function getPointThickness(row, fallbackThickness = null) {
+  if (!row) return fallbackThickness ?? null;
+  const candidates = [
+    "Thickness",
+    "thickness",
+    "THICKNESS",
+    "SlabThickness",
+    "slab_thickness",
+    "PavementThickness",
+    "CoreThickness",
+    "h",
+    "H1",
+  ];
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      const num = typeof row[key] === "number" ? row[key] : parseFloat(row[key]);
+      if (Number.isFinite(num) && num > 0) {
+        return num;
+      }
+    }
+  }
+  if (fallbackThickness !== undefined && fallbackThickness !== null) {
+    const num = typeof fallbackThickness === "number" ? fallbackThickness : parseFloat(fallbackThickness);
+    if (Number.isFinite(num) && num > 0) {
+      return num;
+    }
+  }
+  return null;
+}
+
 // Compute forward road bearing (azimuth 0-360 deg) between stations
 function getStationHeading(points, currentIdx) {
   if (!points || points.length === 0) return 0;
@@ -100,6 +130,7 @@ export default function MapView({
   columns = [],
   sectionName = "",
   selectedVariant = "A",
+  sectionThickness = null,
 }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -107,6 +138,8 @@ export default function MapView({
   const pegmanMarkerRef = useRef(null); // Active Pegman marker on map
   const chartContainerRef = useRef(null);
   const svgRef = useRef(null);
+  const thicknessContainerRef = useRef(null);
+  const thicknessSvgRef = useRef(null);
   const splitContainerRef = useRef(null);
   const panoContainerRef = useRef(null);
   const panoramaInstance = useRef(null);
@@ -130,6 +163,20 @@ export default function MapView({
   const [activeStationId, setActiveStationId] = useState(null);
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [chartWidth, setChartWidth] = useState(1200);
+
+  // Synchronized Slab / Pavement Thickness Profile States
+  const [showThicknessProfile, setShowThicknessProfile] = useState(true);
+  const [showThicknessAverageLine, setShowThicknessAverageLine] = useState(true);
+  const [showThicknessLegend, setShowThicknessLegend] = useState(true);
+
+  // Screenshot Clean View Mode (hides toolbars, headers, extra badges for aligned capture)
+  const [isScreenshotMode, setIsScreenshotMode] = useState(false);
+
+  // Dynamic pane heights with vertical drag splitters
+  const [deflectionHeight, setDeflectionHeight] = useState(230);
+  const [thicknessHeight, setThicknessHeight] = useState(230);
+  const [isDraggingSplit1, setIsDraggingSplit1] = useState(false);
+  const [isDraggingSplit2, setIsDraggingSplit2] = useState(false);
 
   // In-Map Street View & Resizable Split View states
   const [streetViewActive, setStreetViewActive] = useState(false);
@@ -364,9 +411,84 @@ export default function MapView({
     window.addEventListener("pointerup", handlePointerUp);
   }, []);
 
+  // Listen for Escape key to exit Screenshot Clean View
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && isScreenshotMode) {
+        setIsScreenshotMode(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isScreenshotMode]);
+
+  // ── Vertical Drag Resizers for Stacked Panes (Map <-> Deflection <-> Thickness) ──
+  const handleSplit1PointerDown = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDraggingSplit1(true);
+      const startY = e.clientY;
+      const startH = deflectionHeight;
+
+      const handlePointerMove = (ev) => {
+        ev.preventDefault();
+        const delta = startY - ev.clientY; // dragging upwards expands Deflection height
+        const newH = Math.max(120, Math.min(600, startH + delta));
+        setDeflectionHeight(Math.round(newH));
+        if (map.current) map.current.resize();
+      };
+
+      const handlePointerUp = () => {
+        setIsDraggingSplit1(false);
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        setTimeout(() => {
+          if (map.current) map.current.resize();
+        }, 50);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+    },
+    [deflectionHeight]
+  );
+
+  const handleSplit2PointerDown = useCallback(
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDraggingSplit2(true);
+      const startY = e.clientY;
+      const startH = thicknessHeight;
+
+      const handlePointerMove = (ev) => {
+        ev.preventDefault();
+        const delta = startY - ev.clientY; // dragging upwards expands Thickness height
+        const newH = Math.max(120, Math.min(600, startH + delta));
+        setThicknessHeight(Math.round(newH));
+        if (map.current) map.current.resize();
+      };
+
+      const handlePointerUp = () => {
+        setIsDraggingSplit2(false);
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        setTimeout(() => {
+          if (map.current) map.current.resize();
+        }, 50);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+    },
+    [thicknessHeight]
+  );
+
   // Dynamic wide-format chart measurement via ResizeObserver
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    const el = chartContainerRef.current || thicknessContainerRef.current;
+    if (!el) return;
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (entry.contentRect.width > 0) {
@@ -374,9 +496,10 @@ export default function MapView({
         }
       }
     });
-    ro.observe(chartContainerRef.current);
+    if (chartContainerRef.current) ro.observe(chartContainerRef.current);
+    if (thicknessContainerRef.current) ro.observe(thicknessContainerRef.current);
     return () => ro.disconnect();
-  }, [showProfile]);
+  }, [showProfile, showThicknessProfile]);
 
   // Extract deflection columns sorted numerically: D1, D2, D3...
   const deflectionCols = useMemo(() => {
@@ -582,7 +705,90 @@ export default function MapView({
     };
   }, [stats, profilePoints, showAverageLine, plotWidth, plotHeight]);
 
-  // Re-fit canvas when split screen opens/closes or street view activates
+  // Extract thickness points along road DMI
+  const thicknessPoints = useMemo(() => {
+    return validPoints
+      .map((pt, idx) => {
+        const thick = getPointThickness(pt, sectionThickness);
+        return {
+          originalIdx: idx,
+          dmi: pt.dmi,
+          val: thick,
+          stationId: pt.StationID ?? pt.stationId,
+          lat: pt.lat,
+          lng: pt.lng,
+        };
+      })
+      .filter((p) => p.val !== null && Number.isFinite(p.val) && p.val > 0)
+      .sort((a, b) => a.dmi - b.dmi);
+  }, [validPoints, sectionThickness]);
+
+  // Summary statistics for Thickness Profile
+  const thicknessStats = useMemo(() => {
+    if (thicknessPoints.length === 0) return null;
+    const vals = thicknessPoints.map((p) => p.val);
+    const sum = vals.reduce((a, b) => a + b, 0);
+    const mean = sum / vals.length;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const variance = vals.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / vals.length;
+    const stdDev = Math.sqrt(variance);
+    const cv = mean > 0 ? (stdDev / mean) * 100 : 0;
+    return { mean, min, max, stdDev, cv, count: vals.length };
+  }, [thicknessPoints]);
+
+  // Compute Thickness Scales strictly aligned to Deflection DMI range and plotWidth
+  const thicknessScales = useMemo(() => {
+    if (!thicknessStats || thicknessPoints.length === 0 || !stats) return null;
+
+    // Use stats minDmi and maxDmi from deflection profile so DMIs are 100% synchronized!
+    const minDmi = stats.minDmi;
+    const maxDmi = stats.maxDmi === minDmi ? minDmi + 100 : stats.maxDmi;
+    const dmiRange = maxDmi - minDmi;
+
+    const getX = (dmi) => padding.left + ((dmi - minDmi) / dmiRange) * plotWidth;
+
+    const maxVal = Math.max(thicknessStats.max, showThicknessAverageLine ? thicknessStats.mean : 0);
+    const roundedYMax = Math.max(Math.ceil(maxVal * 1.25), 10);
+    const getY = (val) => padding.top + plotHeight - (val / roundedYMax) * plotHeight;
+
+    const mappedPoints = thicknessPoints.map((p) => ({
+      ...p,
+      x: getX(p.dmi),
+      y: getY(p.val),
+    }));
+
+    const linePath = mappedPoints.reduce((acc, p, i) => {
+      return i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
+    }, "");
+
+    const averageY = getY(thicknessStats.mean);
+
+    return {
+      roundedYMax,
+      getX,
+      getY,
+      mappedPoints,
+      linePath,
+      averageY,
+    };
+  }, [thicknessStats, thicknessPoints, stats, plotWidth, plotHeight, showThicknessAverageLine]);
+
+  // Synchronized active point for Thickness chart
+  const activeHoverThicknessPoint = useMemo(() => {
+    if (!thicknessScales) return null;
+    const targetId = hoveredStationId ?? activeStationId;
+    if (targetId !== null && targetId !== undefined) {
+      return (
+        thicknessScales.mappedPoints.find(
+          (p) => String(p.stationId) === String(targetId)
+        ) || null
+      );
+    }
+    return null;
+  }, [thicknessScales, hoveredStationId, activeStationId]);
+
+  // Re-fit canvas when split screen opens/closes, charts toggle, or heights change
   useEffect(() => {
     if (map.current) {
       const timer = setTimeout(() => {
@@ -590,7 +796,7 @@ export default function MapView({
       }, 60);
       return () => clearTimeout(timer);
     }
-  }, [showProfile, streetViewActive]);
+  }, [showProfile, showThicknessProfile, deflectionHeight, thicknessHeight, streetViewActive, isScreenshotMode]);
 
   // Synchronized refs to avoid stale closures in event listeners
   const streetViewActiveRef = useRef(streetViewActive);
@@ -1515,6 +1721,112 @@ export default function MapView({
     }
   };
 
+  // SVG Export Canvas helper for Thickness Profile (high-resolution 2x PNG)
+  const exportThicknessChartAsCanvas = () => {
+    const svgEl = thicknessSvgRef.current;
+    if (!svgEl) return null;
+
+    const clone = svgEl.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(chartWidth));
+    clone.setAttribute("height", String(chartHeight));
+
+    const bgRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bgRect.setAttribute("width", "100%");
+    bgRect.setAttribute("height", "100%");
+    bgRect.setAttribute("fill", "#ffffff");
+    clone.insertBefore(bgRect, clone.firstChild);
+
+    const svgString = new XMLSerializer().serializeToString(clone);
+    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = 2; // 2x high-res
+        const canvas = document.createElement("canvas");
+        canvas.width = chartWidth * scale;
+        canvas.height = chartHeight * scale;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+        URL.revokeObjectURL(url);
+        resolve(canvas);
+      };
+      img.onerror = (e) => {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+      img.src = url;
+    });
+  };
+
+  const handleCopyThicknessChart = async () => {
+    try {
+      const canvas = await exportThicknessChartAsCanvas();
+      if (!canvas) return;
+
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          show?.("Failed to generate thickness chart image", "error");
+          return;
+        }
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          show?.("Thickness Profile copied to clipboard!", "success");
+        } catch (err) {
+          console.error("Clipboard copy error:", err);
+          show?.("Could not copy chart to clipboard", "error");
+        }
+      });
+    } catch (err) {
+      console.error("Export error:", err);
+      show?.("Export failed", "error");
+    }
+  };
+
+  const handleDownloadThicknessChart = async () => {
+    try {
+      const canvas = await exportThicknessChartAsCanvas();
+      if (!canvas) return;
+
+      const dataUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `Thickness_Profile_Drop_${selectedVariant}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      show?.("Thickness chart downloaded!", "success");
+    } catch (err) {
+      console.error("Download error:", err);
+      show?.("Download failed", "error");
+    }
+  };
+
+  // Wide-format interactive scrubbing handler for Thickness chart
+  const handleThicknessMouseMove = (e) => {
+    if (!thicknessSvgRef.current || !thicknessScales || thicknessScales.mappedPoints.length === 0) return;
+    const rect = thicknessSvgRef.current.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+
+    let closest = thicknessScales.mappedPoints[0];
+    let minDist = Math.abs(thicknessScales.mappedPoints[0].x - mouseX);
+    for (let i = 1; i < thicknessScales.mappedPoints.length; i++) {
+      const dist = Math.abs(thicknessScales.mappedPoints[i].x - mouseX);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = thicknessScales.mappedPoints[i];
+      }
+    }
+    setHoveredPoint(closest);
+    setHoveredStationId(closest.stationId);
+  };
+
   // Wide-format interactive scrubbing handler
   const handleChartMouseMove = (e) => {
     if (!svgRef.current || !scales || scales.mappedPoints.length === 0) return;
@@ -1695,23 +2007,93 @@ export default function MapView({
         overflow: "hidden",
       }}
     >
-      {/* Top Map Toolbar */}
-      <div className="map-toolbar">
-        {/* Left: Section tag, count, Profile Toggle, Street View & Road Zoom */}
-        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", flexWrap: "wrap" }}>
-          <span className="badge badge-dark">Drop {selectedVariant}</span>
-          <span style={{ fontSize: 13, fontWeight: 500 }}>
-            {validPoints.length.toLocaleString()} locations
-          </span>
+      {/* Floating Exit Clean Screenshot View Pill Button */}
+      {isScreenshotMode && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 16,
+            zIndex: 1000,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
           <button
             type="button"
-            className={`btn btn-sm ${showProfile ? "btn-primary" : "btn-secondary"}`}
-            onClick={() => setShowProfile((v) => !v)}
-            title={showProfile ? "Hide Synchronized Deflection Profile" : "Show Synchronized Deflection Profile"}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
+            onClick={() => setIsScreenshotMode(false)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 14px",
+              borderRadius: "20px",
+              background: "rgba(17, 24, 39, 0.90)",
+              color: "#ffffff",
+              border: "1px solid rgba(255, 255, 255, 0.25)",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+              backdropFilter: "blur(6px)",
+              transition: "all 0.15s ease",
+            }}
+            title="Click or press Esc to exit clean screenshot view and restore controls"
           >
-            <span>📈</span> {showProfile ? "Hide Profile" : "Deflection Profile"}
+            <span>📸 Exit Clean View (Esc)</span>
           </button>
+        </div>
+      )}
+
+      {/* Top Map Toolbar - Hidden in Clean Screenshot Mode */}
+      {!isScreenshotMode && (
+        <div className="map-toolbar">
+          {/* Left: Section tag, count, Profile Toggle, Thickness Toggle, Screenshot Mode, Street View & Road Zoom */}
+          <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", flexWrap: "wrap" }}>
+            <span className="badge badge-dark">Drop {selectedVariant}</span>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>
+              {validPoints.length.toLocaleString()} locations
+            </span>
+            <button
+              type="button"
+              className={`btn btn-sm ${showProfile ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setShowProfile((v) => !v)}
+              title={showProfile ? "Hide Synchronized Deflection Profile" : "Show Synchronized Deflection Profile"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
+            >
+              <span>📈</span> {showProfile ? "Hide Deflection" : "Deflection Profile"}
+            </button>
+
+            {/* Thickness Profile Toggle Button */}
+            <button
+              type="button"
+              className={`btn btn-sm ${showThicknessProfile ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setShowThicknessProfile((v) => !v)}
+              title={showThicknessProfile ? "Hide Synchronized Thickness Profile" : "Show Synchronized Thickness Profile"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
+            >
+              <span>📏</span> {showThicknessProfile ? "Hide Thickness" : "Thickness Profile"}
+            </button>
+
+            {/* Clean Screenshot View Mode Button */}
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => setIsScreenshotMode(true)}
+              title="Enter Clean Screenshot View (hides toolbars, headers, and attached info for aligned capture)"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontWeight: 700,
+                background: "#f1f5f9",
+                borderColor: "#cbd5e1",
+                color: "#0f172a",
+              }}
+            >
+              <span>📸</span> Clean Screenshot View
+            </button>
 
           {/* Street View Toggle Button */}
           <button
@@ -1951,6 +2333,7 @@ export default function MapView({
           </div>
         </div>
       </div>
+      )}
 
       {/* Main Split-Screen Container */}
       <div
@@ -2454,8 +2837,8 @@ export default function MapView({
               </div>
             )}
 
-            {/* Synchronized Hover HUD Callout Pill over Map */}
-            {!isPegmanMode && activeHoverPoint && (
+            {/* Synchronized Hover HUD Callout Pill over Map - Hidden in Clean Screenshot Mode */}
+            {!isScreenshotMode && !isPegmanMode && activeHoverPoint && (
               <div
                 style={{
                   position: "absolute",
@@ -2520,8 +2903,8 @@ export default function MapView({
               </div>
             )}
 
-            {/* Floating Interactive Pegman Button */}
-            {!streetViewActive && (
+            {/* Floating Interactive Pegman Button - Hidden in Clean Screenshot Mode */}
+            {!isScreenshotMode && !streetViewActive && (
               <div
                 className="map-pegman-btn"
                 onClick={() => {
@@ -2565,36 +2948,38 @@ export default function MapView({
               </div>
             )}
 
-            {/* Floating Interactive Cardinal Compass Rose */}
-            <div
-              className="map-compass"
-              onClick={handleResetRotation}
-              title="Click to reset to North"
-            >
+            {/* Floating Interactive Cardinal Compass Rose - Hidden in Clean Screenshot Mode */}
+            {!isScreenshotMode && (
               <div
-                className="compass-rose"
-                style={{ transform: `rotate(${-normalizedBearing}deg)` }}
+                className="map-compass"
+                onClick={handleResetRotation}
+                title="Click to reset to North"
               >
-                <div className="compass-pointer north">
-                  <span className="compass-letter">N</span>
+                <div
+                  className="compass-rose"
+                  style={{ transform: `rotate(${-normalizedBearing}deg)` }}
+                >
+                  <div className="compass-pointer north">
+                    <span className="compass-letter">N</span>
+                  </div>
+                  <div className="compass-pointer south">
+                    <span className="compass-letter">S</span>
+                  </div>
+                  <div className="compass-pointer east">
+                    <span className="compass-letter">E</span>
+                  </div>
+                  <div className="compass-pointer west">
+                    <span className="compass-letter">W</span>
+                  </div>
+                  <div className="compass-center-dot" />
                 </div>
-                <div className="compass-pointer south">
-                  <span className="compass-letter">S</span>
-                </div>
-                <div className="compass-pointer east">
-                  <span className="compass-letter">E</span>
-                </div>
-                <div className="compass-pointer west">
-                  <span className="compass-letter">W</span>
-                </div>
-                <div className="compass-center-dot" />
+                {normalizedBearing !== 0 && (
+                  <div className="compass-reset-hint">
+                    ↺ Reset
+                  </div>
+                )}
               </div>
-              {normalizedBearing !== 0 && (
-                <div className="compass-reset-hint">
-                  ↺ Reset
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Map Canvas */}
             <div
@@ -2604,13 +2989,45 @@ export default function MapView({
           </div>
         </div>
 
+        {/* Vertical Drag Resizer Bar: Map <-> Deflection */}
+        {showProfile && (
+          <div
+            onPointerDown={handleSplit1PointerDown}
+            style={{
+              height: 7,
+              width: "100%",
+              cursor: "row-resize",
+              background: isDraggingSplit1 ? "#3b82f6" : "#f3f4f6",
+              borderTop: "1px solid #e5e7eb",
+              borderBottom: "1px solid #e5e7eb",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              userSelect: "none",
+              touchAction: "none",
+              zIndex: 20,
+              transition: isDraggingSplit1 ? "none" : "background 0.15s ease",
+            }}
+            title="Drag vertically to resize Map / Deflection chart height"
+          >
+            <div
+              style={{
+                width: 38,
+                height: 3,
+                borderRadius: 2,
+                background: isDraggingSplit1 ? "#ffffff" : "#9ca3af",
+              }}
+            />
+          </div>
+        )}
+
         {/* Bottom/Lower: Wide-Format Synchronized Deflection Profile matching ProfileView */}
         {showProfile && (
           <div
             style={{
-              flex: "0 0 280px",
-              height: 280,
-              minHeight: 250,
+              flex: `0 0 ${deflectionHeight}px`,
+              height: deflectionHeight,
+              minHeight: 120,
               borderTop: "1px solid var(--border-subtle)",
               background: "#ffffff",
               display: "flex",
@@ -2620,19 +3037,20 @@ export default function MapView({
               zIndex: 5,
             }}
           >
-            {/* Header & Controls Bar matching ProfileView */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 14px",
-                background: "#f9fafb",
-                borderBottom: "1px solid var(--border-subtle)",
-                flexWrap: "wrap",
-                gap: "var(--sp-2)",
-              }}
-            >
+            {/* Header & Controls Bar matching ProfileView - Hidden in Clean Screenshot Mode */}
+            {!isScreenshotMode && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "6px 14px",
+                  background: "#f9fafb",
+                  borderBottom: "1px solid var(--border-subtle)",
+                  flexWrap: "wrap",
+                  gap: "var(--sp-2)",
+                }}
+              >
               {/* Left: Sensor Selector Pills + Average Toggle */}
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
@@ -2796,6 +3214,7 @@ export default function MapView({
                 </button>
               </div>
             </div>
+            )}
 
             {/* Wide Full-Width SVG Area */}
             <div
@@ -3105,6 +3524,512 @@ export default function MapView({
                   <div className="empty-state-icon">📈</div>
                   <h3>No profile data</h3>
                   <p>Could not extract station DMI distance values from this section.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Vertical Drag Resizer Bar: Deflection <-> Thickness */}
+        {showThicknessProfile && (
+          <div
+            onPointerDown={handleSplit2PointerDown}
+            style={{
+              height: 7,
+              width: "100%",
+              cursor: "row-resize",
+              background: isDraggingSplit2 ? "#3b82f6" : "#f3f4f6",
+              borderTop: "1px solid #e5e7eb",
+              borderBottom: "1px solid #e5e7eb",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              userSelect: "none",
+              touchAction: "none",
+              zIndex: 20,
+              transition: isDraggingSplit2 ? "none" : "background 0.15s ease",
+            }}
+            title="Drag vertically to resize Deflection / Thickness chart height"
+          >
+            <div
+              style={{
+                width: 38,
+                height: 3,
+                borderRadius: 2,
+                background: isDraggingSplit2 ? "#ffffff" : "#9ca3af",
+              }}
+            />
+          </div>
+        )}
+
+        {/* Drag Protection Overlay for Vertical Splitters */}
+        {(isDraggingSplit1 || isDraggingSplit2) && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 99999,
+              cursor: "row-resize",
+              userSelect: "none",
+            }}
+          />
+        )}
+
+        {/* Bottom-most: Wide-Format Synchronized Slab / Pavement Thickness Profile */}
+        {showThicknessProfile && (
+          <div
+            style={{
+              flex: `0 0 ${thicknessHeight}px`,
+              height: thicknessHeight,
+              minHeight: 120,
+              borderTop: "1px solid var(--border-subtle)",
+              background: "#ffffff",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              boxShadow: "0 -2px 10px rgba(0,0,0,0.06)",
+              zIndex: 5,
+            }}
+          >
+            {/* Header & Controls Bar - Hidden in Clean Screenshot Mode */}
+            {!isScreenshotMode && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "6px 14px",
+                  background: "#fdfbf7",
+                  borderBottom: "1px solid #fef3c7",
+                  flexWrap: "wrap",
+                  gap: "var(--sp-2)",
+                }}
+              >
+                {/* Left: Label + Average Toggle + Legend Toggle + Stats Badge */}
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#92400e", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <span>📏</span> Thickness Profile{sectionName ? ` (${sectionName})` : ""}:
+                  </span>
+
+                  {/* Average Line Toggle (Amber Dotted) */}
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      userSelect: "none",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showThicknessAverageLine}
+                      onChange={(e) => setShowThicknessAverageLine(e.target.checked)}
+                      style={{ accentColor: "#b45309", cursor: "pointer" }}
+                    />
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ width: 12, height: 2, borderBottom: "2px dotted #b45309", display: "inline-block" }} />
+                      Average
+                    </span>
+                  </label>
+
+                  {/* Legend Toggle Checkbox */}
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      userSelect: "none",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showThicknessLegend}
+                      onChange={(e) => setShowThicknessLegend(e.target.checked)}
+                      style={{ accentColor: "#b45309", cursor: "pointer" }}
+                    />
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                      Legend
+                    </span>
+                  </label>
+
+                  {/* Section Stats Summary Badge */}
+                  {thicknessStats && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "#78350f",
+                        background: "#fef3c7",
+                        border: "1px solid #fde68a",
+                        padding: "2px 8px",
+                        borderRadius: "var(--r-sm)",
+                      }}
+                    >
+                      Mean: <strong style={{ color: "#92400e" }}>{thicknessStats.mean.toFixed(1)} in</strong> | Min: {thicknessStats.min.toFixed(1)} | Max: {thicknessStats.max.toFixed(1)} in
+                      {thicknessStats.cv > 0 && ` | CV: ${thicknessStats.cv.toFixed(1)}%`}
+                    </span>
+                  )}
+
+                  {/* Selected / Hovered Point Thickness Badge */}
+                  {activeHoverThicknessPoint && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "#92400e",
+                        background: "#fef3c7",
+                        border: "1px solid #fde68a",
+                        padding: "2px 8px",
+                        borderRadius: "var(--r-sm)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <strong>Station {activeHoverThicknessPoint.stationId}:</strong>
+                      <span style={{ fontWeight: 700 }}>{activeHoverThicknessPoint.val.toFixed(1)} in</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* Right: Copy + Download + Close */}
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleCopyThicknessChart}
+                    title="Copy thickness profile chart image to clipboard"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px" }}
+                  >
+                    <span>📋</span> Copy
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleDownloadThicknessChart}
+                    title="Download thickness chart as high-resolution PNG"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px" }}
+                  >
+                    <span>⬇</span> Download
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setShowThicknessProfile(false)}
+                    title="Close Thickness Profile"
+                    style={{ padding: "2px 7px", fontSize: 12, lineHeight: 1 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Wide Full-Width SVG Area for Thickness - Perfectly Matched to Deflection Chart */}
+            <div
+              ref={thicknessContainerRef}
+              style={{
+                flex: 1,
+                width: "100%",
+                padding: "4px 12px 6px",
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#ffffff",
+                cursor: "crosshair",
+              }}
+            >
+              {thicknessScales && scales ? (() => {
+                const legendItems = [];
+                legendItems.push({
+                  id: "thickness",
+                  label: "Thickness Profile",
+                  type: "solid-amber",
+                });
+                if (showThicknessAverageLine && thicknessStats) {
+                  legendItems.push({
+                    id: "average",
+                    label: `Average: ${thicknessStats.mean.toFixed(1)} in`,
+                    type: "dotted-amber",
+                  });
+                }
+
+                const legendWidth = 195;
+                const legendHeight = 12 + legendItems.length * 18;
+                const legendX = padding.left + plotWidth - legendWidth - 10;
+                const legendY = padding.top + 8;
+
+                return (
+                  <svg
+                    ref={thicknessSvgRef}
+                    viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                    style={{ width: "100%", height: "100%", overflow: "visible", background: "#ffffff" }}
+                    onMouseMove={handleThicknessMouseMove}
+                    onMouseLeave={() => {
+                      setHoveredPoint(null);
+                      setHoveredStationId(null);
+                    }}
+                    onClick={handleChartClick}
+                    onDoubleClick={handleChartDoubleClick}
+                  >
+                    {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
+                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+                      const y = padding.top + pct * plotHeight;
+                      const val = ((1 - pct) * thicknessScales.roundedYMax).toFixed(1);
+                      return (
+                        <g key={`th-grid-${pct}`}>
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={padding.left + plotWidth}
+                            y2={y}
+                            stroke="#e5e7eb"
+                            strokeWidth="1"
+                          />
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={padding.left + 6}
+                            y2={y}
+                            stroke="#111827"
+                            strokeWidth="1.5"
+                          />
+                          <text
+                            x={padding.left - 8}
+                            y={y + 4}
+                            textAnchor="end"
+                            fontSize="13"
+                            fill="#111827"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            {val}
+                          </text>
+                        </g>
+                      );
+                    })}
+
+                    {/* Major Vertical Grid Lines & X-axis Inner Ticks (DMI in ft - Identically Aligned to Deflection Chart) */}
+                    {scales.xTicks.map((tick) => (
+                      <g key={`th-x-tick-${tick.val}`}>
+                        <line
+                          x1={tick.x}
+                          y1={padding.top}
+                          x2={tick.x}
+                          y2={padding.top + plotHeight}
+                          stroke="#e5e7eb"
+                          strokeWidth="1"
+                        />
+                        <line
+                          x1={tick.x}
+                          y1={padding.top + plotHeight}
+                          x2={tick.x}
+                          y2={padding.top + plotHeight - 6}
+                          stroke="#111827"
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x={tick.x}
+                          y={padding.top + plotHeight + 18}
+                          textAnchor="middle"
+                          fontSize="13"
+                          fill="#111827"
+                          fontFamily="Arial, sans-serif"
+                        >
+                          {tick.val}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* Average Reference Line (Dotted Amber Line) */}
+                    {showThicknessAverageLine && thicknessStats && (
+                      <line
+                        x1={padding.left}
+                        y1={thicknessScales.averageY}
+                        x2={padding.left + plotWidth}
+                        y2={thicknessScales.averageY}
+                        stroke="#b45309"
+                        strokeWidth="1.8"
+                        strokeDasharray="3 3"
+                      />
+                    )}
+
+                    {/* Thickness Profile Curve Path (Solid Amber Line) */}
+                    <path
+                      d={thicknessScales.linePath}
+                      fill="none"
+                      stroke="#b45309"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Station Data Point Circles (Solid Amber Dots) */}
+                    {thicknessScales.mappedPoints.map((pt) => {
+                      const isHovered =
+                        (hoveredStationId !== null && String(hoveredStationId) === String(pt.stationId)) ||
+                        (activeHoverThicknessPoint && activeHoverThicknessPoint.originalIdx === pt.originalIdx);
+                      return (
+                        <g key={`th-pt-${pt.originalIdx}`} style={{ cursor: "pointer" }}>
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={isHovered ? "4.5" : "3.5"}
+                            fill={isHovered ? "#ffffff" : "#b45309"}
+                            stroke={isHovered ? "#2563eb" : "#b45309"}
+                            strokeWidth={isHovered ? "2" : "1"}
+                          />
+                        </g>
+                      );
+                    })}
+
+                    {/* 4-sided Inner Box Border in Solid Black */}
+                    <rect
+                      x={padding.left}
+                      y={padding.top}
+                      width={plotWidth}
+                      height={plotHeight}
+                      fill="none"
+                      stroke="#111827"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Top-Right Legend Box with Solid Black Border */}
+                    {showThicknessLegend && legendItems.length > 0 && (
+                      <g transform={`translate(${legendX}, ${legendY})`}>
+                        <rect
+                          x="0"
+                          y="0"
+                          width={legendWidth}
+                          height={legendHeight}
+                          fill="rgba(255, 255, 255, 0.95)"
+                          stroke="#111827"
+                          strokeWidth="1.5"
+                          rx="3"
+                        />
+                        {legendItems.map((item, idx) => {
+                          const itemY = 14 + idx * 18;
+                          return (
+                            <g key={item.id}>
+                              {item.type === "solid-amber" && (
+                                <>
+                                  <line x1="10" y1={itemY} x2="30" y2={itemY} stroke="#b45309" strokeWidth="2.5" />
+                                  <circle cx="20" cy={itemY} r="3" fill="#b45309" stroke="#ffffff" strokeWidth="1" />
+                                </>
+                              )}
+                              {item.type === "dotted-amber" && (
+                                <line x1="10" y1={itemY} x2="30" y2={itemY} stroke="#b45309" strokeWidth="2" strokeDasharray="3 3" />
+                              )}
+                              <text
+                                x="38"
+                                y={itemY + 4}
+                                fontSize="11"
+                                fontFamily="Arial, sans-serif"
+                                fill="#111827"
+                                fontWeight="600"
+                              >
+                                {item.label}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    )}
+
+                    {/* Synchronized Drop Line & Interactive Tooltip Card */}
+                    {activeHoverThicknessPoint && (
+                      <g pointerEvents="none">
+                        <line
+                          x1={activeHoverThicknessPoint.x}
+                          y1={padding.top}
+                          x2={activeHoverThicknessPoint.x}
+                          y2={padding.top + plotHeight}
+                          stroke="#9ca3af"
+                          strokeWidth="1"
+                          strokeDasharray="3 3"
+                        />
+                        <circle
+                          cx={activeHoverThicknessPoint.x}
+                          cy={activeHoverThicknessPoint.y}
+                          r="5"
+                          fill="#ffffff"
+                          stroke="#b45309"
+                          strokeWidth="2"
+                        />
+                        {(() => {
+                          const tooltipWidth = 130;
+                          const tooltipHeight = 52;
+                          const gap = 16;
+                          const placeBelow = activeHoverThicknessPoint.y - tooltipHeight - gap < padding.top;
+                          const tooltipX = Math.max(
+                            padding.left + 5,
+                            Math.min(padding.left + plotWidth - tooltipWidth - 5, activeHoverThicknessPoint.x - tooltipWidth / 2)
+                          );
+                          const tooltipY = placeBelow
+                            ? activeHoverThicknessPoint.y + gap
+                            : activeHoverThicknessPoint.y - tooltipHeight - gap;
+
+                          return (
+                            <g transform={`translate(${tooltipX}, ${tooltipY})`}>
+                              <rect
+                                x="0"
+                                y="0"
+                                width={tooltipWidth}
+                                height={tooltipHeight}
+                                rx="4"
+                                fill="#111827"
+                                opacity="0.95"
+                              />
+                              <text x="8" y="16" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                Station: <tspan fill="#ffffff" fontWeight="bold">{activeHoverThicknessPoint.stationId}</tspan>
+                              </text>
+                              <text x="8" y="31" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                DMI: <tspan fill="#ffffff" fontWeight="bold">{activeHoverThicknessPoint.dmi.toLocaleString()} ft</tspan>
+                              </text>
+                              <text x="8" y="46" fill="#9ca3af" fontSize="10.5" fontFamily="Arial, sans-serif">
+                                Thickness: <tspan fill="#fbbf24" fontWeight="bold">{activeHoverThicknessPoint.val.toFixed(1)} in</tspan>
+                              </text>
+                            </g>
+                          );
+                        })()}
+                      </g>
+                    )}
+
+                    {/* Axis Titles in Arial Bold matching ProfileView */}
+                    <text
+                      x={padding.left - 44}
+                      y={padding.top + plotHeight / 2}
+                      textAnchor="middle"
+                      fontSize="14"
+                      fontWeight="bold"
+                      fill="#111827"
+                      fontFamily="Arial, sans-serif"
+                      transform={`rotate(-90 ${padding.left - 44} ${padding.top + plotHeight / 2})`}
+                    >
+                      Thickness (in)
+                    </text>
+                    <text
+                      x={padding.left + plotWidth / 2}
+                      y={chartHeight - 6}
+                      textAnchor="middle"
+                      fontSize="14"
+                      fontWeight="bold"
+                      fill="#111827"
+                      fontFamily="Arial, sans-serif"
+                    >
+                      DMI (ft)
+                    </text>
+                  </svg>
+                );
+              })() : (
+                <div className="empty-state" style={{ padding: "24px 16px" }}>
+                  <div className="empty-state-icon" style={{ fontSize: 24 }}>📏</div>
+                  <h3 style={{ fontSize: 14, margin: "6px 0 2px" }}>No thickness data</h3>
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                    No thickness profile values available for this section.
+                  </p>
                 </div>
               )}
             </div>

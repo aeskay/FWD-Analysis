@@ -401,6 +401,7 @@ export default function SectionView({
           columns={tableData?.columns ?? []}
           sectionName={section?.name}
           selectedVariant={selectedVariant}
+          sectionThickness={sectionThickness}
         />
       )}
 
