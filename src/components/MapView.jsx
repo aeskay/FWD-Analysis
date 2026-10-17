@@ -1807,11 +1807,23 @@ export default function MapView({
     }
   };
 
+  // Helper to convert screen mouse coordinates directly to exact SVG viewBox coordinates
+  const getSvgCoordinates = (svg, clientX, clientY) => {
+    if (!svg || !svg.getScreenCTM) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    return pt.matrixTransform(ctm.inverse());
+  };
+
   // Wide-format interactive scrubbing handler for Thickness chart
   const handleThicknessMouseMove = (e) => {
     if (!thicknessSvgRef.current || !thicknessScales || thicknessScales.mappedPoints.length === 0) return;
-    const rect = thicknessSvgRef.current.getBoundingClientRect();
-    const mouseX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+    const svgPt = getSvgCoordinates(thicknessSvgRef.current, e.clientX, e.clientY);
+    const mouseX = svgPt ? svgPt.x : null;
+    if (mouseX === null) return;
 
     let closest = thicknessScales.mappedPoints[0];
     let minDist = Math.abs(thicknessScales.mappedPoints[0].x - mouseX);
@@ -1826,11 +1838,12 @@ export default function MapView({
     setHoveredStationId(closest.stationId);
   };
 
-  // Wide-format interactive scrubbing handler
+  // Wide-format interactive scrubbing handler for Deflection chart
   const handleChartMouseMove = (e) => {
     if (!svgRef.current || !scales || scales.mappedPoints.length === 0) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const mouseX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+    const svgPt = getSvgCoordinates(svgRef.current, e.clientX, e.clientY);
+    const mouseX = svgPt ? svgPt.x : null;
+    if (mouseX === null) return;
 
     let closest = scales.mappedPoints[0];
     let minDist = Math.abs(scales.mappedPoints[0].x - mouseX);
@@ -3251,6 +3264,7 @@ export default function MapView({
                   <svg
                     ref={svgRef}
                     viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                    preserveAspectRatio="none"
                     style={{ width: "100%", height: "100%", overflow: "visible", background: "#ffffff" }}
                     onMouseMove={handleChartMouseMove}
                     onMouseLeave={() => {
@@ -3762,6 +3776,7 @@ export default function MapView({
                   <svg
                     ref={thicknessSvgRef}
                     viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                    preserveAspectRatio="none"
                     style={{ width: "100%", height: "100%", overflow: "visible", background: "#ffffff" }}
                     onMouseMove={handleThicknessMouseMove}
                     onMouseLeave={() => {
