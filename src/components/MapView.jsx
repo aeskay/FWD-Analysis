@@ -1443,6 +1443,30 @@ export default function MapView({
     );
   }, [streetViewStation, validPoints]);
 
+  // Selected or hovered point for coordinate display
+  const displayCoordPoint = useMemo(() => {
+    if (hoveredStationId) {
+      const match = validPoints.find(
+        (p) => String(p.StationID ?? p.stationId) === String(hoveredStationId)
+      );
+      if (match) return match;
+    }
+    if (activeStationId) {
+      const match = validPoints.find(
+        (p) => String(p.StationID ?? p.stationId) === String(activeStationId)
+      );
+      if (match) return match;
+    }
+    if (streetViewStation) {
+      const match = validPoints.find(
+        (p) => String(p.StationID ?? p.stationId) === String(streetViewStation.StationID ?? streetViewStation.stationId)
+      );
+      if (match) return match;
+      if (streetViewStation.lat && streetViewStation.lng) return streetViewStation;
+    }
+    return validPoints[0] ?? null;
+  }, [hoveredStationId, activeStationId, streetViewStation, validPoints]);
+
   const handleToolbarStreetView = () => {
     if (streetViewActive) {
       setStreetViewActive(false);
@@ -1885,6 +1909,27 @@ export default function MapView({
                       <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
                       <span style={{ color: "#38bdf8", fontWeight: 600, fontSize: 11 }}>
                         {activeSensor}: {Number(streetViewStation[activeSensor] ?? streetViewStation.D1 ?? 0).toFixed(2)} mils
+                      </span>
+                    </>
+                  )}
+                  {streetViewStation.lat != null && streetViewStation.lng != null && (
+                    <>
+                      <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
+                      <span
+                        onClick={() => {
+                          const coordStr = `${streetViewStation.lat.toFixed(6)}, ${streetViewStation.lng.toFixed(6)}`;
+                          navigator.clipboard?.writeText(coordStr);
+                          show?.(`Coordinates copied: ${coordStr}`, "success");
+                        }}
+                        style={{
+                          color: "#93c5fd",
+                          fontFamily: "monospace",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                        title={`Station ${streetViewStation.StationID ?? streetViewStation.stationId}: Click to copy coordinates (${streetViewStation.lat.toFixed(6)}, ${streetViewStation.lng.toFixed(6)})`}
+                      >
+                        📍 {streetViewStation.lat.toFixed(6)}, {streetViewStation.lng.toFixed(6)}
                       </span>
                     </>
                   )}
@@ -2500,6 +2545,43 @@ export default function MapView({
                     }}
                   >
                     Mean: <strong style={{ color: "#111827" }}>{stats.mean.toFixed(2)} mils</strong> | Min: {stats.min.toFixed(2)} | Max: {stats.max.toFixed(2)} mils
+                  </span>
+                )}
+
+                {/* Selected Point GPS Coordinates Badge */}
+                {displayCoordPoint && displayCoordPoint.lat != null && displayCoordPoint.lng != null && (
+                  <span
+                    onClick={() => {
+                      const coordStr = `${displayCoordPoint.lat.toFixed(6)}, ${displayCoordPoint.lng.toFixed(6)}`;
+                      navigator.clipboard?.writeText(coordStr);
+                      show?.(`Coordinates copied: ${coordStr}`, "success");
+                    }}
+                    style={{
+                      fontSize: 11,
+                      color: "#1e40af",
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      padding: "2px 8px",
+                      borderRadius: "var(--r-sm)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      cursor: "pointer",
+                      userSelect: "none",
+                      transition: "all 0.15s ease",
+                    }}
+                    title={`Station ${displayCoordPoint.StationID ?? displayCoordPoint.stationId}: Click to copy coordinates (${displayCoordPoint.lat.toFixed(6)}, ${displayCoordPoint.lng.toFixed(6)})`}
+                  >
+                    <span style={{ fontSize: 11 }}>📍</span>
+                    <strong style={{ color: "#1e3a8a" }}>
+                      Station {displayCoordPoint.StationID ?? displayCoordPoint.stationId}:
+                    </strong>
+                    <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#1e40af" }}>
+                      {displayCoordPoint.lat.toFixed(6)}, {displayCoordPoint.lng.toFixed(6)}
+                    </span>
+                    <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 2 }} title="Click to copy">
+                      📋
+                    </span>
                   </span>
                 )}
               </div>
