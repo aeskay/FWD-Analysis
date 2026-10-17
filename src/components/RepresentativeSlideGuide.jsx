@@ -61,6 +61,11 @@ export default function RepresentativeSlideGuide({
   const [activeSlide, setActiveSlide] = useState(1);
   const [copiedKey, setCopiedKey] = useState(null);
 
+  // Slide 1 interactive layer toggles (allows showing Chart 1: Average, Chart 2: Representative, or Both)
+  const [slide1ShowMean, setSlide1ShowMean] = useState(true);
+  const [slide1ShowRep, setSlide1ShowRep] = useState(true);
+  const [slide1ShowAll, setSlide1ShowAll] = useState(true);
+
   // SVG Chart refs for exporting
   const chartRef1 = useRef(null);
   const chartRef2 = useRef(null);
@@ -1130,6 +1135,124 @@ export default function RepresentativeSlideGuide({
                 </div>
               </div>
 
+              {/* ── Slide 1 Interactive Toggle Bar (Average vs. Representative vs. Both) ── */}
+              {activeSlide === 1 && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    padding: "8px 12px",
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "6px",
+                  }}
+                >
+                  {/* Presets */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#475569" }}>View Presets:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSlide1ShowMean(true);
+                        setSlide1ShowRep(false);
+                        setSlide1ShowAll(true);
+                      }}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        border: slide1ShowMean && !slide1ShowRep ? "1px solid #dc2626" : "1px solid #cbd5e1",
+                        background: slide1ShowMean && !slide1ShowRep ? "#fee2e2" : "#ffffff",
+                        color: slide1ShowMean && !slide1ShowRep ? "#991b1b" : "#334155",
+                        fontWeight: slide1ShowMean && !slide1ShowRep ? 700 : 500,
+                        cursor: "pointer",
+                      }}
+                      title="Show Chart 1: Measured Basins + Mathematical Average only"
+                    >
+                      Chart 1: Average Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSlide1ShowMean(false);
+                        setSlide1ShowRep(true);
+                        setSlide1ShowAll(true);
+                      }}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        border: !slide1ShowMean && slide1ShowRep ? "1px solid #16a34a" : "1px solid #cbd5e1",
+                        background: !slide1ShowMean && slide1ShowRep ? "#dcfce7" : "#ffffff",
+                        color: !slide1ShowMean && slide1ShowRep ? "#14532d" : "#334155",
+                        fontWeight: !slide1ShowMean && slide1ShowRep ? 700 : 500,
+                        cursor: "pointer",
+                      }}
+                      title="Show Chart 2: Measured Basins + Representative Basin only"
+                    >
+                      Chart 2: Representative Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSlide1ShowMean(true);
+                        setSlide1ShowRep(true);
+                        setSlide1ShowAll(true);
+                      }}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        border: slide1ShowMean && slide1ShowRep ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                        background: slide1ShowMean && slide1ShowRep ? "#eff6ff" : "#ffffff",
+                        color: slide1ShowMean && slide1ShowRep ? "#1d4ed8" : "#334155",
+                        fontWeight: slide1ShowMean && slide1ShowRep ? 700 : 500,
+                        cursor: "pointer",
+                      }}
+                      title="Show Both Average and Representative together"
+                    >
+                      Both (Comparison)
+                    </button>
+                  </div>
+
+                  {/* Layer Checkboxes */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={slide1ShowMean}
+                        onChange={(e) => setSlide1ShowMean(e.target.checked)}
+                        style={{ accentColor: "#dc2626", cursor: "pointer" }}
+                      />
+                      <span style={{ fontWeight: 600, color: "#dc2626" }}>Average</span>
+                    </label>
+
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={slide1ShowRep}
+                        onChange={(e) => setSlide1ShowRep(e.target.checked)}
+                        style={{ accentColor: "#16a34a", cursor: "pointer" }}
+                      />
+                      <span style={{ fontWeight: 600, color: "#16a34a" }}>Representative</span>
+                    </label>
+
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={slide1ShowAll}
+                        onChange={(e) => setSlide1ShowAll(e.target.checked)}
+                        style={{ accentColor: "#000000", cursor: "pointer" }}
+                      />
+                      <span style={{ fontWeight: 500, color: "#334155" }}>Measured</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* ── LIVE RENDERED SVG CHART PREVIEWS ── */}
               <div
                 style={{
@@ -1144,111 +1267,130 @@ export default function RepresentativeSlideGuide({
                 }}
               >
                 {/* ── CHART 1: ALL LOCATIONS OVERLAY + MEAN + REPRESENTATIVE SAMPLE (SLIDE 1) ── */}
-                {activeSlide === 1 && (
-                  <svg
-                    ref={chartRef1}
-                    width={chartW}
-                    height={chartH}
-                    viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
-                    shapeRendering="crispEdges"
-                    textRendering="geometricPrecision"
-                  >
-                    {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                    {renderCommonGridAndAxes("Section Deflection Basins: Mean vs. Representative")}
+                {activeSlide === 1 && (() => {
+                  const slide1Title =
+                    slide1ShowMean && slide1ShowRep
+                      ? "Section Deflection Basins: Mean vs. Representative"
+                      : slide1ShowMean
+                      ? "Section Deflection Basins: Mathematical Average"
+                      : slide1ShowRep
+                      ? "Section Deflection Basins: Representative Basin"
+                      : "Measured Pavement Deflection Basins";
 
-                    {/* 1. All Station Locations (Thin Black Lines) */}
-                    {stationPaths.map((sp) => (
-                      <path
-                        key={`station-${sp.id}`}
-                        d={sp.d}
+                  const slide1LegendItems = [];
+                  if (slide1ShowRep) {
+                    slide1LegendItems.push({
+                      id: "rep",
+                      label: "Representative Basin",
+                      type: "solid-green",
+                    });
+                  }
+                  if (slide1ShowMean) {
+                    slide1LegendItems.push({
+                      id: "mean",
+                      label: "Mathematical Average",
+                      type: "dashed-red",
+                    });
+                  }
+                  if (slide1ShowAll) {
+                    slide1LegendItems.push({
+                      id: "all",
+                      label: "Measured Basins",
+                      type: "thin-black",
+                    });
+                  }
+
+                  return (
+                    <svg
+                      ref={chartRef1}
+                      width={chartW}
+                      height={chartH}
+                      viewBox={`0 0 ${chartW} ${chartH}`}
+                      style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                      shapeRendering="crispEdges"
+                      textRendering="geometricPrecision"
+                    >
+                      {/* Common Gridlines, Inner Ticks, and Axis Titles */}
+                      {renderCommonGridAndAxes(slide1Title)}
+
+                      {/* 1. All Station Locations (Thin Black Lines) */}
+                      {slide1ShowAll &&
+                        stationPaths.map((sp) => (
+                          <path
+                            key={`station-${sp.id}`}
+                            d={sp.d}
+                            fill="none"
+                            stroke="#111827"
+                            strokeWidth="1.2"
+                            opacity="0.20"
+                          />
+                        ))}
+
+                      {/* 2. Mathematical Average / Section Mean (Dashed Red Line) */}
+                      {slide1ShowMean && meanPoints.length > 0 && (
+                        <>
+                          <path
+                            d={makePathD(meanPoints)}
+                            fill="none"
+                            stroke="#dc2626"
+                            strokeWidth="2"
+                            strokeDasharray="6 3"
+                          />
+                          {meanPoints.map((pt) => (
+                            <circle
+                              key={`mean-pt-${pt.sensor}`}
+                              cx={pt.x}
+                              cy={pt.y}
+                              r="3.5"
+                              fill="#dc2626"
+                              stroke="#ffffff"
+                              strokeWidth="1.5"
+                            />
+                          ))}
+                        </>
+                      )}
+
+                      {/* 3. Representative Sample (Solid Green Line + Circles, NO cluttered text numbers) */}
+                      {slide1ShowRep && repPoints.length > 0 && (
+                        <>
+                          <path
+                            d={makePathD(repPoints)}
+                            fill="none"
+                            stroke="#16a34a"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {repPoints.map((pt) => (
+                            <circle
+                              key={`rep-pt-${pt.sensor}`}
+                              cx={pt.x}
+                              cy={pt.y}
+                              r="4.5"
+                              fill="#16a34a"
+                              stroke="#ffffff"
+                              strokeWidth="1.5"
+                            />
+                          ))}
+                        </>
+                      )}
+
+                      {/* 4-sided Inner Box Border (rendered again on top for clean edges) */}
+                      <rect
+                        x={pad.left}
+                        y={pad.top}
+                        width={plotW}
+                        height={plotH}
                         fill="none"
-                        stroke="#111827"
-                        strokeWidth="1.2"
-                        opacity="0.20"
+                        stroke="#000000"
+                        strokeWidth="1.5"
                       />
-                    ))}
 
-                    {/* 2. Mathematical Average / Section Mean (Dashed Red Line) */}
-                    {meanPoints.length > 0 && (
-                      <>
-                        <path
-                          d={makePathD(meanPoints)}
-                          fill="none"
-                          stroke="#dc2626"
-                          strokeWidth="2"
-                          strokeDasharray="6 3"
-                        />
-                        {meanPoints.map((pt) => (
-                          <circle
-                            key={`mean-pt-${pt.sensor}`}
-                            cx={pt.x}
-                            cy={pt.y}
-                            r="3.5"
-                            fill="#dc2626"
-                            stroke="#ffffff"
-                            strokeWidth="1.5"
-                          />
-                        ))}
-                      </>
-                    )}
-
-                    {/* 3. Representative Sample (Solid Green Line + Circles, NO cluttered text numbers) */}
-                    {repPoints.length > 0 && (
-                      <>
-                        <path
-                          d={makePathD(repPoints)}
-                          fill="none"
-                          stroke="#16a34a"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {repPoints.map((pt) => (
-                          <circle
-                            key={`rep-pt-${pt.sensor}`}
-                            cx={pt.x}
-                            cy={pt.y}
-                            r="4.5"
-                            fill="#16a34a"
-                            stroke="#ffffff"
-                            strokeWidth="1.5"
-                          />
-                        ))}
-                      </>
-                    )}
-
-                    {/* 4-sided Inner Box Border (rendered again on top for clean edges) */}
-                    <rect
-                      x={pad.left}
-                      y={pad.top}
-                      width={plotW}
-                      height={plotH}
-                      fill="none"
-                      stroke="#000000"
-                      strokeWidth="1.5"
-                    />
-
-                    {/* Bottom-Right Compact Legend */}
-                    {renderBottomRightLegend([
-                      {
-                        id: "rep",
-                        label: "Representative Basin",
-                        type: "solid-green",
-                      },
-                      {
-                        id: "mean",
-                        label: "Mathematical Average",
-                        type: "dashed-red",
-                      },
-                      {
-                        id: "all",
-                        label: "Measured Basins",
-                        type: "thin-black",
-                      },
-                    ])}
-                  </svg>
-                )}
+                      {/* Bottom-Right Compact Legend (dynamically shows only visible layers) */}
+                      {slide1LegendItems.length > 0 && renderBottomRightLegend(slide1LegendItems)}
+                    </svg>
+                  );
+                })()}
 
                 {/* ── CHART 2: SECTION MEAN BASELINE BASIN (SLIDE 2) ── */}
                 {activeSlide === 2 && (
