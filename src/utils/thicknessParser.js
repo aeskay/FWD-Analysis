@@ -250,6 +250,7 @@ export function matchThicknessToStations(
         rawFileValue: match ? match.rawVal : null,
         thickness: match ? match.thickness : null,
         isMeasured: match ? match.thickness !== null : false,
+        hasFileRow: !!match,
       };
     });
   }
@@ -263,12 +264,117 @@ export function matchThicknessToStations(
     return {
       stationId: stn.stationId,
       dmi: stn.dmi,
-      fileRowNumber: idx + 1,
+      fileRowNumber: fileRow ? idx + 1 : null,
       rawFileValue: rawVal,
       thickness,
       isMeasured: thickness !== null,
+      hasFileRow: !!fileRow,
     };
   });
+}
+
+/**
+ * Extracts extra rows from the file that exceed the total count of section stations.
+ */
+export function getExtraFileRows(fileRows, uniqueStationsCount, thicknessCol) {
+  if (!fileRows || fileRows.length <= uniqueStationsCount) return [];
+  return fileRows.slice(uniqueStationsCount).map((r, idx) => {
+    const rawVal = r ? r[thicknessCol] : null;
+    return {
+      fileRowNumber: uniqueStationsCount + idx + 1,
+      rawFileValue: rawVal,
+      thickness: cleanThicknessValue(rawVal),
+    };
+  });
+}
+
+/**
+ * Diagnoses discrepancies between file rows and section stations.
+ */
+export function diagnoseRowMismatch({
+  totalStations,
+  fileRowCount,
+  matchingMethod,
+  matchedList = [],
+  stationCol = "",
+}) {
+  const diff = fileRowCount - totalStations;
+
+  if (matchingMethod === "order") {
+    if (diff === 0) {
+      return {
+        hasMismatch: false,
+        type: "exact",
+        difference: 0,
+        missingCount: 0,
+        extraCount: 0,
+        severity: "success",
+        title: "Exact Count Match",
+        message: `Perfect match: Exactly ${fileRowCount} rows in the file corresponding to all ${totalStations} stations in this section.`,
+        details: null,
+      };
+    }
+
+    if (diff < 0) {
+      const missingCount = Math.abs(diff);
+      return {
+        hasMismatch: true,
+        type: "fewer_rows",
+        difference: diff,
+        missingCount,
+        extraCount: 0,
+        severity: "warning",
+        title: `Row Count Mismatch (${missingCount} fewer rows)`,
+        message: `The imported file has ${fileRowCount} rows, but this section has ${totalStations} stations. The last ${missingCount} station${missingCount === 1 ? "" : "s"} (Stations ${fileRowCount + 1} to ${totalStations}) have no corresponding row in the file and will remain empty (—).`,
+        details: `File rows 1–${fileRowCount} matched to Stations 1–${fileRowCount}. Stations ${fileRowCount + 1}–${totalStations} have no file data.`,
+      };
+    }
+
+    // diff > 0
+    const extraCount = diff;
+    return {
+      hasMismatch: true,
+      type: "extra_rows",
+      difference: diff,
+      missingCount: 0,
+      extraCount,
+      severity: "warning",
+      title: `Row Count Mismatch (${extraCount} extra rows)`,
+      message: `The imported file has ${fileRowCount} rows, but this section only has ${totalStations} stations. The first ${totalStations} rows are matched to Stations 1–${totalStations}. The last ${extraCount} file row${extraCount === 1 ? "" : "s"} (Rows ${totalStations + 1} to ${fileRowCount}) will be ignored.`,
+      details: `Rows 1–${totalStations} matched to Section Stations 1–${totalStations}. File rows ${totalStations + 1}–${fileRowCount} exceed section stations and will not be applied.`,
+    };
+  } else {
+    // Station ID column matching
+    const unmappedStations = matchedList.filter((m) => m.fileRowNumber == null);
+    const mappedRowSet = new Set(matchedList.map((m) => m.fileRowNumber).filter(Boolean));
+    const unmappedFileRowsCount = Math.max(0, fileRowCount - mappedRowSet.size);
+
+    if (unmappedStations.length > 0 || unmappedFileRowsCount > 0) {
+      return {
+        hasMismatch: true,
+        type: "station_id_mismatch",
+        difference: diff,
+        missingCount: unmappedStations.length,
+        extraCount: unmappedFileRowsCount,
+        severity: "warning",
+        title: "Station ID Mapping Discrepancy",
+        message: `${unmappedStations.length > 0 ? `${unmappedStations.length} of ${totalStations} section stations could not be found in the file and will remain empty (—). ` : ""}${unmappedFileRowsCount > 0 ? `${unmappedFileRowsCount} row${unmappedFileRowsCount === 1 ? "" : "s"} in the file did not match any section station.` : ""}`,
+        details: `Matched ${totalStations - unmappedStations.length} of ${totalStations} stations using column "${stationCol || "StationID"}".`,
+      };
+    }
+
+    return {
+      hasMismatch: false,
+      type: "exact",
+      difference: 0,
+      missingCount: 0,
+      extraCount: 0,
+      severity: "success",
+      title: "All Stations Matched",
+      message: `All ${totalStations} stations successfully matched by Station ID.`,
+      details: null,
+    };
+  }
 }
 
 /**
