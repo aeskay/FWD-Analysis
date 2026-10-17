@@ -1259,15 +1259,15 @@ export default function MapView({
     });
   }, [hoveredStationId, activeStationId, dotColor, dotRadius, mapType]);
 
-  // Rotation controls
+  // Rotation controls (adjusting camera bearing to rotate the visual map in the indicated direction)
   const handleRotateLeft = () => {
     if (!map.current) return;
-    map.current.easeTo({ bearing: map.current.getBearing() - 15, duration: 200 });
+    map.current.easeTo({ bearing: map.current.getBearing() + 15, duration: 200 });
   };
 
   const handleRotateRight = () => {
     if (!map.current) return;
-    map.current.easeTo({ bearing: map.current.getBearing() + 15, duration: 200 });
+    map.current.easeTo({ bearing: map.current.getBearing() - 15, duration: 200 });
   };
 
   const handleResetRotation = () => {
@@ -1728,7 +1728,7 @@ export default function MapView({
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={handleRotateLeft}
-              title="Rotate Left (-15°)"
+              title="Rotate View Left (↺)"
             >
               ↺
             </button>
@@ -1777,7 +1777,7 @@ export default function MapView({
               type="button"
               className="btn btn-secondary btn-sm"
               onClick={handleRotateRight}
-              title="Rotate Right (+15°)"
+              title="Rotate View Right (↻)"
             >
               ↻
             </button>
