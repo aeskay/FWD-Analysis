@@ -102,11 +102,7 @@ function openGoogleStreetView(lat, lng, heading = 0) {
 }
 
 const COLOR_OPTIONS = [
-  { label: "Cyan", value: "#06b6d4" },
-  { label: "Amber", value: "#f59e0b" },
-  { label: "Lime", value: "#10b981" },
   { label: "Red", value: "#ef4444" },
-  { label: "White", value: "#ffffff" },
   { label: "Black", value: "#111827" },
 ];
 
@@ -2041,7 +2037,7 @@ export default function MapView({
             }}
             title="Click or press Esc to exit clean screenshot view and restore controls"
           >
-            <span>📸 Exit Clean View (Esc)</span>
+            <span>📸 Exit Screenshot (Esc)</span>
           </button>
         </div>
       )}
@@ -2049,9 +2045,8 @@ export default function MapView({
       {/* Top Map Toolbar - Hidden in Clean Screenshot Mode */}
       {!isScreenshotMode && (
         <div className="map-toolbar">
-          {/* Left: Section tag, count, Profile Toggle, Thickness Toggle, Screenshot Mode, Street View & Road Zoom */}
+          {/* Left: Locations count, Profile Toggle, Thickness Toggle, Screenshot Mode, Street View */}
           <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", flexWrap: "wrap" }}>
-            <span className="badge badge-dark">Drop {selectedVariant}</span>
             <span style={{ fontSize: 13, fontWeight: 500 }}>
               {validPoints.length.toLocaleString()} locations
             </span>
@@ -2076,12 +2071,12 @@ export default function MapView({
               <span>📏</span> {showThicknessProfile ? "Hide Thickness" : "Thickness Profile"}
             </button>
 
-            {/* Clean Screenshot View Mode Button */}
+            {/* Screenshot View Mode Button */}
             <button
               type="button"
               className="btn btn-sm btn-secondary"
               onClick={() => setIsScreenshotMode(true)}
-              title="Enter Clean Screenshot View (hides toolbars, headers, and attached info for aligned capture)"
+              title="Enter Screenshot Mode (hides toolbars, headers, and attached info for aligned capture)"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -2092,7 +2087,7 @@ export default function MapView({
                 color: "#0f172a",
               }}
             >
-              <span>📸</span> Clean Screenshot View
+              <span>📸</span> Screenshot
             </button>
 
           {/* Street View Toggle Button */}
@@ -2120,18 +2115,6 @@ export default function MapView({
             <span style={{ fontSize: 15 }}>🚶‍♂️</span>
             <span>{streetViewActive ? "Exit Street View" : "Street View"}</span>
           </button>
-
-          {/* Quick Double-Click Zoom to Road Surface (19.5z) */}
-          <button
-            type="button"
-            className={`btn btn-sm ${currentZoom >= 18.5 ? "btn-primary" : "btn-secondary"}`}
-            onClick={handleToggleRoadZoom}
-            title="Double-click map or click here to zoom way in to road surface (19.5z)"
-            style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600 }}
-          >
-            <span>🔍</span>
-            <span>{currentZoom >= 18.5 ? "Survey View" : "Road Surface"}</span>
-          </button>
         </div>
 
         {/* Center: Dot Style Controls & Show/Hide Points */}
@@ -2158,7 +2141,6 @@ export default function MapView({
             <span>Points on Road</span>
           </label>
 
-          <span className="map-tool-label">Marker:</span>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             {COLOR_OPTIONS.map((c) => (
               <button
@@ -2170,21 +2152,6 @@ export default function MapView({
                 title={c.label}
               />
             ))}
-            <input
-              type="color"
-              value={dotColor}
-              onChange={(e) => setDotColor(e.target.value)}
-              title="Custom color"
-              style={{
-                width: 20,
-                height: 20,
-                padding: 0,
-                border: "1px solid #d1d5db",
-                borderRadius: 4,
-                cursor: "pointer",
-                background: "none",
-              }}
-            />
           </div>
 
           <span className="map-tool-label" style={{ marginLeft: "var(--sp-2)" }}>Size:</span>
