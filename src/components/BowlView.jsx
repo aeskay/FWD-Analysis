@@ -485,7 +485,7 @@ export default function BowlView({
                     background: "#f9fafb",
                     padding: "6px 10px",
                   }}
-                  title="Root-Mean-Square Error distance to Section Mean Basin"
+                  title="Root-Mean-Square Error distance to Section Mean Bowl"
                 >
                   RMSE (mils)
                 </th>
@@ -631,7 +631,7 @@ export default function BowlView({
               <button
                 className="btn btn-primary btn-sm"
                 onClick={() => setShowSlideGuide(true)}
-                title="Open step-by-step presentation slides explaining representative basin selection, equations, and charts"
+                title="Open step-by-step presentation slides explaining representative bowl selection, equations, and charts"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",

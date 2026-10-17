@@ -162,12 +162,12 @@ export default function RepresentativeSlideGuide({
   const repRmse = rep?.rmse !== undefined ? rep.rmse.toFixed(3) : "—";
   const stationCount = rows.length;
 
-  // ── EXACT DIMENSIONS MATCHING BOWLVIEW ──
+  // ── EXACT DIMENSIONS MATCHING BOWLVIEW (NO INTERNAL TITLE) ──
   const chartW = 640;
   const chartH = 400;
-  const pad = { top: 40, right: 35, bottom: 65, left: 75 };
+  const pad = { top: 25, right: 35, bottom: 65, left: 75 };
   const plotW = chartW - pad.left - pad.right; // 530
-  const plotH = chartH - pad.top - pad.bottom; // 295
+  const plotH = chartH - pad.top - pad.bottom; // 310
   const xGap = 28;
   const availW = plotW - 2 * xGap;
 
@@ -239,16 +239,16 @@ export default function RepresentativeSlideGuide({
       id: 1,
       num: "Slide 1",
       badge: "Context & Motivation",
-      title: "Selection of Representative Deflection Basin for Modulus Backcalculation",
+      title: "Selection of Representative Deflection Bowl for Modulus Backcalculation",
       subtitle: "Why an actual physical station is required rather than a synthetic mathematical average",
       objective:
-        "Establish why multi-layer elastic backcalculation requires a real, physically measured deflection basin rather than an artificial section mean.",
+        "Establish why multi-layer elastic backcalculation requires a real, physically measured deflection bowl rather than an artificial section mean.",
       bullets: [
         "Falling Weight Deflectometer (FWD) non-destructively evaluates pavement structural capacity across all tested locations.",
         "Backcalculation tools (MODULUS, BAKFAA, EVERCALC, ELMOD) apply Multi-Layer Elastic Theory (MLET) to estimate layer elastic moduli (E_AC, E_Base, E_Subgrade).",
         "Pavement materials exhibit non-linear, stress-dependent behavior (granular base hardening and subgrade softening).",
         "Averaging is NOT Real Data: Simply averaging deflections creates an artificial synthetic bowl that does not exist physically and distorts non-linear layer interactions.",
-        "Engineering Objective: Use rigorous statistical evaluation to identify a real, physically measured station whose entire basin shape best represents the section central tendency.",
+        "Engineering Objective: Use rigorous statistical evaluation to identify a real, physically measured station whose entire bowl shape best represents the section central tendency.",
       ],
       latex: [
         {
@@ -259,7 +259,7 @@ export default function RepresentativeSlideGuide({
       ],
       speakerNotes:
         "Explain that in pavement engineering practice, we never backcalculate an 'average bowl' because mathematical averaging creates a fictitious pavement structure. Instead, our goal is to find the single real, physically tested station that sits at the true structural center of the test section.",
-      chartCaption: "Section Deflection Basins: Comparison between all measured basins, the artificial mathematical average, and the selected representative basin.",
+      chartCaption: "Section Deflection Bowls: Comparison between all measured bowls, the artificial mathematical average, and the selected representative bowl.",
       recommendedChart: "all_overlay",
     },
     {
@@ -291,7 +291,7 @@ export default function RepresentativeSlideGuide({
       ],
       speakerNotes:
         "Walk through the two equations. Point out that normalization removes drop force variability. Then, explain that D̄ gives us the mathematical benchmark for every sensor, while CV_j tells us which layer has the highest variability along the project.",
-      chartCaption: "Section Mean Deflection Basin: Benchmark curve against which all individual bowls are mathematically compared.",
+      chartCaption: "Section Mean Deflection Bowl: Benchmark curve against which all individual bowls are mathematically compared.",
       recommendedChart: "mean_basin",
     },
     {
@@ -304,7 +304,7 @@ export default function RepresentativeSlideGuide({
         "Present the mathematical Euclidean distance formula and explain why multi-sensor RMSE is superior to picking by D₁ alone.",
       bullets: [
         "Traditional practice often picked a station solely based on the median D₁ (maximum deflection).",
-        "Limitation of D₁-only: Two stations may share identical D₁ deflections but possess vastly different basin slopes and subgrade responses.",
+        "Limitation of D₁-only: Two stations may share identical D₁ deflections but possess vastly different bowl slopes and subgrade responses.",
         "Our method computes the Root Mean Square Error (RMSE) across all N = 7 sensors for every station i.",
         "RMSE acts as an N-dimensional Euclidean distance measuring simultaneous shape and magnitude alignment.",
         `Selection Criterion: The representative station is uniquely chosen as the one minimizing RMSE across all stations (Station ${repStationId} with minimum RMSE = ${repRmse} mils).`,
@@ -333,20 +333,20 @@ export default function RepresentativeSlideGuide({
       num: "Slide 4",
       badge: "Step 3: Structural Validation",
       title: "Validation via Pavement Structural Indices (SCI, BDI, BCI, AREA)",
-      subtitle: "Verifying layer-by-layer mechanical fidelity of the selected representative basin",
+      subtitle: "Verifying layer-by-layer mechanical fidelity of the selected representative bowl",
       objective:
-        "Demonstrate that the selected representative basin preserves layer-specific stiffness and structural indices.",
+        "Demonstrate that the selected representative bowl preserves layer-specific stiffness and structural indices.",
       bullets: [
         "In addition to overall RMSE, pavement engineers evaluate depth-specific structural condition indices:",
         `Surface Curvature Index (SCI = D₁ - D₂): Reflects surface / AC layer stiffness. Rep = ${sectionStats?.repIndices?.sci?.toFixed(2) ?? "—"} mils vs Mean = ${sectionStats?.meanIndices?.sci?.toFixed(2) ?? "—"} mils.`,
         `Base Damage Index (BDI = D₂ - D₃): Reflects base layer integrity. Rep = ${sectionStats?.repIndices?.bdi?.toFixed(2) ?? "—"} mils vs Mean = ${sectionStats?.meanIndices?.bdi?.toFixed(2) ?? "—"} mils.`,
         `Base Curvature Index (BCI = D₃ - D₄): Reflects subgrade response. Rep = ${sectionStats?.repIndices?.bci?.toFixed(2) ?? "—"} mils vs Mean = ${sectionStats?.meanIndices?.bci?.toFixed(2) ?? "—"} mils.`,
-        `AASHTO Basin Area Parameter: Overall structural rigidity. Rep = ${sectionStats?.repIndices?.area?.toFixed(1) ?? "—"} in vs Mean = ${sectionStats?.meanIndices?.area?.toFixed(1) ?? "—"} in.`,
+        `AASHTO Bowl Area Parameter: Overall structural rigidity. Rep = ${sectionStats?.repIndices?.area?.toFixed(1) ?? "—"} in vs Mean = ${sectionStats?.meanIndices?.area?.toFixed(1) ?? "—"} in.`,
         "The close alignment between Representative and Section Mean indices confirms physical fidelity.",
       ],
       latex: [
         {
-          title: "Standard Pavement Structural Basin Indices",
+          title: "Standard Pavement Structural Bowl Indices",
           code: "\\begin{aligned} \\text{SCI} &= D_1 - D_2 \\quad &\\text{(Surface / AC Layer)} \\\\ \\text{BDI} &= D_2 - D_3 \\quad &\\text{(Base Layer Condition)} \\\\ \\text{BCI} &= D_3 - D_4 \\quad &\\text{(Subgrade Response)} \\\\ \\text{AREA} &= 6 \\times \\left[ 1 + 2\\left(\\frac{D_2}{D_1}\\right) + 2\\left(\\frac{D_3}{D_1}\\right) + \\left(\\frac{D_4}{D_1}\\right) \\right] \\quad &\\text{(AASHTO Stiffness)} \\end{aligned}",
           explanation: "Standard industry metrics (AASHTO / TxDOT) isolating structural health at specific pavement depths.",
         },
@@ -383,7 +383,7 @@ export default function RepresentativeSlideGuide({
       ],
       speakerNotes:
         "Conclude by highlighting that our approach is fully automated, transparent, and defensible in any pavement design or forensic report. We preserve true non-linear material response while rigorously representing the section central tendency.",
-      chartCaption: "Representative Station Deflection Bowl: The final validated physical basin selected for backcalculation.",
+      chartCaption: "Representative Station Deflection Bowl: The final validated physical bowl selected for backcalculation.",
       recommendedChart: "rep_bowl",
     },
   ];
@@ -409,25 +409,11 @@ export default function RepresentativeSlideGuide({
   };
 
   // -------------------------------------------------------------
-  // REUSABLE AXIS ELEMENTS & INNER TICKS (MATCHING BOWLVIEW)
+  // REUSABLE AXIS ELEMENTS & INNER TICKS (MATCHING BOWLVIEW, NO TITLE)
   // -------------------------------------------------------------
-  const renderCommonGridAndAxes = (titleText) => {
+  const renderCommonGridAndAxes = () => {
     return (
       <>
-        {/* Chart Title */}
-        <text
-          x={chartW / 2}
-          y={24}
-          textAnchor="middle"
-          fontSize="16"
-          fontWeight="bold"
-          fill="#000000"
-          fontFamily="Arial, sans-serif"
-          shapeRendering="auto"
-        >
-          {titleText}
-        </text>
-
         {/* Horizontal Grid Lines & Y-axis Inner Ticks */}
         {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
           const y = pad.top + pct * plotH;
@@ -658,7 +644,7 @@ export default function RepresentativeSlideGuide({
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em" }}>
-                  Representative Basin Selection — Slide Presentation Guide
+                  Representative Bowl Selection — Slide Presentation Guide
                 </span>
                 <span
                   style={{
@@ -1170,7 +1156,7 @@ export default function RepresentativeSlideGuide({
                         fontWeight: slide1ShowMean && !slide1ShowRep ? 700 : 500,
                         cursor: "pointer",
                       }}
-                      title="Show Chart 1: Measured Basins + Mathematical Average only"
+                      title="Show Chart 1: Measured Bowls + Mathematical Average only"
                     >
                       Chart 1: Average Only
                     </button>
@@ -1191,7 +1177,7 @@ export default function RepresentativeSlideGuide({
                         fontWeight: !slide1ShowMean && slide1ShowRep ? 700 : 500,
                         cursor: "pointer",
                       }}
-                      title="Show Chart 2: Measured Basins + Representative Basin only"
+                      title="Show Chart 2: Measured Bowls + Representative Bowl only"
                     >
                       Chart 2: Representative Only
                     </button>
@@ -1270,18 +1256,18 @@ export default function RepresentativeSlideGuide({
                 {activeSlide === 1 && (() => {
                   const slide1Title =
                     slide1ShowMean && slide1ShowRep
-                      ? "Section Deflection Basins: Mean vs. Representative"
+                      ? "Section Deflection Bowls: Mean vs. Representative"
                       : slide1ShowMean
-                      ? "Section Deflection Basins: Mathematical Average"
+                      ? "Section Deflection Bowls: Mathematical Average"
                       : slide1ShowRep
-                      ? "Section Deflection Basins: Representative Basin"
-                      : "Measured Pavement Deflection Basins";
+                      ? "Section Deflection Bowls: Representative Bowl"
+                      : "Measured Pavement Deflection Bowls";
 
                   const slide1LegendItems = [];
                   if (slide1ShowRep) {
                     slide1LegendItems.push({
                       id: "rep",
-                      label: "Representative Basin",
+                      label: "Representative Bowl",
                       type: "solid-green",
                     });
                   }
@@ -1295,7 +1281,7 @@ export default function RepresentativeSlideGuide({
                   if (slide1ShowAll) {
                     slide1LegendItems.push({
                       id: "all",
-                      label: "Measured Basins",
+                      label: "Measured Bowls",
                       type: "thin-black",
                     });
                   }
@@ -1311,7 +1297,7 @@ export default function RepresentativeSlideGuide({
                       textRendering="geometricPrecision"
                     >
                       {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                      {renderCommonGridAndAxes(slide1Title)}
+                      {renderCommonGridAndAxes()}
 
                       {/* 1. All Station Locations (Thin Black Lines) */}
                       {slide1ShowAll &&
@@ -1404,7 +1390,7 @@ export default function RepresentativeSlideGuide({
                     textRendering="geometricPrecision"
                   >
                     {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                    {renderCommonGridAndAxes("Baseline Normalized Mean Deflection Basin (9,000 lbs)")}
+                    {renderCommonGridAndAxes()}
 
                     {/* Shaded Area under Mean */}
                     {meanPoints.length > 0 && (
@@ -1498,20 +1484,6 @@ export default function RepresentativeSlideGuide({
                         shapeRendering="crispEdges"
                         textRendering="geometricPrecision"
                       >
-                        {/* Title */}
-                        <text
-                          x={chartW / 2}
-                          y={24}
-                          textAnchor="middle"
-                          fontSize="16"
-                          fontWeight="bold"
-                          fill="#000000"
-                          fontFamily="Arial, sans-serif"
-                          shapeRendering="auto"
-                        >
-                          Station RMSE Distance from Section Mean
-                        </text>
-
                         {/* Horizontal Gridlines & Y-axis Inner Ticks */}
                         {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
                           const y = pad.top + (1 - pct) * plotH;
@@ -1664,7 +1636,7 @@ export default function RepresentativeSlideGuide({
                         {renderBottomRightLegend([
                           {
                             id: "rep-rmse",
-                            label: "Representative Basin",
+                            label: "Representative Bowl",
                             type: "solid-blue",
                           },
                           {
@@ -1690,7 +1662,7 @@ export default function RepresentativeSlideGuide({
                     textRendering="geometricPrecision"
                   >
                     {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                    {renderCommonGridAndAxes("Geometric Alignment: Representative Basin vs. Section Mean")}
+                    {renderCommonGridAndAxes()}
 
                     {/* Section Mean (Dashed Red Line) */}
                     {meanPoints.length > 0 && (
@@ -1716,7 +1688,7 @@ export default function RepresentativeSlideGuide({
                       </>
                     )}
 
-                    {/* Representative Station (Solid Green Line + Circles + Values) */}
+                    {/* Representative Station (Solid Green Line + Circles, clean alignment view) */}
                     {repPoints.length > 0 && (
                       <>
                         <path
@@ -1727,33 +1699,17 @@ export default function RepresentativeSlideGuide({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         />
-                        {repPoints.map((pt) => {
-                          const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
-                          return (
-                            <g key={`rep-pt-${pt.sensor}`}>
-                              <circle
-                                cx={pt.x}
-                                cy={pt.y}
-                                r="5"
-                                fill="#16a34a"
-                                stroke="#ffffff"
-                                strokeWidth="2"
-                              />
-                              <text
-                                x={pt.x}
-                                y={labelY}
-                                textAnchor="middle"
-                                fontSize="12"
-                                fontWeight="normal"
-                                fill="#16a34a"
-                                fontFamily="Arial, sans-serif"
-                                shapeRendering="auto"
-                              >
-                                {pt.val.toFixed(2)}
-                              </text>
-                            </g>
-                          );
-                        })}
+                        {repPoints.map((pt) => (
+                          <circle
+                            key={`rep-pt-${pt.sensor}`}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="4.5"
+                            fill="#16a34a"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
                       </>
                     )}
 
@@ -1772,7 +1728,7 @@ export default function RepresentativeSlideGuide({
                     {renderBottomRightLegend([
                       {
                         id: "rep",
-                        label: "Representative Basin",
+                        label: "Representative Bowl",
                         type: "solid-green",
                       },
                       {
@@ -1784,7 +1740,7 @@ export default function RepresentativeSlideGuide({
                   </svg>
                 )}
 
-                {/* ── CHART 5: FINAL REPRESENTATIVE BASIN (SLIDE 5) ── */}
+                {/* ── CHART 5: FINAL REPRESENTATIVE BOWL (SLIDE 5) ── */}
                 {activeSlide === 5 && (
                   <svg
                     ref={chartRef5}
@@ -1796,7 +1752,7 @@ export default function RepresentativeSlideGuide({
                     textRendering="geometricPrecision"
                   >
                     {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                    {renderCommonGridAndAxes(`Representative Deflection Basin: Station ${repStationId} (Drop ${selectedVariant})`)}
+                    {renderCommonGridAndAxes()}
 
                     {/* Shaded Area under Curve */}
                     {repPoints.length > 0 && (
@@ -1863,7 +1819,7 @@ export default function RepresentativeSlideGuide({
                     {renderBottomRightLegend([
                       {
                         id: "rep",
-                        label: "Representative Basin",
+                        label: "Representative Bowl",
                         type: "solid-green",
                       },
                     ])}
