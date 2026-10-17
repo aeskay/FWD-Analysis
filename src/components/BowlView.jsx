@@ -9,6 +9,7 @@ const chartHeight = 400;
 const padding = { top: 40, right: 35, bottom: 65, left: 75 };
 const plotWidth = chartWidth - padding.left - padding.right;
 const plotHeight = chartHeight - padding.top - padding.bottom;
+const xGap = 28; // small margin before D1 and after D7 so curves/points don't start right on the border lines
 
 export default function BowlView({
   rows = [],
@@ -72,10 +73,12 @@ export default function BowlView({
   const svgPoints = useMemo(() => {
     if (bowlData.length === 0) return [];
     const count = bowlData.length;
+    const availableWidth = Math.max(plotWidth - 2 * xGap, 0);
     return bowlData.map((d, i) => {
       const x =
         padding.left +
-        (count > 1 ? (i / (count - 1)) * plotWidth : plotWidth / 2);
+        xGap +
+        (count > 1 ? (i / (count - 1)) * availableWidth : availableWidth / 2);
       const y = padding.top + (d.val / maxDeflection) * plotHeight;
       return { ...d, x, y };
     });
@@ -233,6 +236,12 @@ export default function BowlView({
     if (!sectionStats || deflectionCols.length === 0) return null;
     const { overlayMaxDeflection, meanMap, representative } = sectionStats;
     const count = deflectionCols.length;
+    const availableWidth = Math.max(plotWidth - 2 * xGap, 0);
+
+    const getX = (i) =>
+      padding.left +
+      xGap +
+      (count > 1 ? (i / (count - 1)) * availableWidth : availableWidth / 2);
 
     // Background station curves
     const stationPaths = rows.map((r, idx) => {
@@ -240,7 +249,7 @@ export default function BowlView({
         const v = r[col];
         const num = typeof v === "number" ? v : parseFloat(v);
         const val = isNaN(num) ? 0 : num;
-        const x = padding.left + (count > 1 ? (i / (count - 1)) * plotWidth : plotWidth / 2);
+        const x = getX(i);
         const y = padding.top + (val / overlayMaxDeflection) * plotHeight;
         return { x, y };
       });
@@ -251,7 +260,7 @@ export default function BowlView({
     // Mean curve points & path
     const meanPoints = deflectionCols.map((col, i) => {
       const val = meanMap[col] ?? 0;
-      const x = padding.left + (count > 1 ? (i / (count - 1)) * plotWidth : plotWidth / 2);
+      const x = getX(i);
       const y = padding.top + (val / overlayMaxDeflection) * plotHeight;
       return { sensor: col, val, x, y };
     });
@@ -263,7 +272,7 @@ export default function BowlView({
           const v = representative.row[col];
           const num = typeof v === "number" ? v : parseFloat(v);
           const val = isNaN(num) ? 0 : num;
-          const x = padding.left + (count > 1 ? (i / (count - 1)) * plotWidth : plotWidth / 2);
+          const x = getX(i);
           const y = padding.top + (val / overlayMaxDeflection) * plotHeight;
           return { sensor: col, val, x, y };
         })
@@ -276,7 +285,7 @@ export default function BowlView({
           const v = activeRow[col];
           const num = typeof v === "number" ? v : parseFloat(v);
           const val = isNaN(num) ? 0 : num;
-          const x = padding.left + (count > 1 ? (i / (count - 1)) * plotWidth : plotWidth / 2);
+          const x = getX(i);
           const y = padding.top + (val / overlayMaxDeflection) * plotHeight;
           return { sensor: col, val, x, y };
         })
@@ -748,19 +757,8 @@ export default function BowlView({
 
                   {/* Sensor Data Points & Data Labels */}
                   {svgPoints.map((pt, i) => {
-                    const isFirst = i === 0;
-                    const isLast = i === svgPoints.length - 1;
-
-                    let textAnchor = "middle";
-                    let labelX = pt.x;
-                    if (isFirst) {
-                      textAnchor = "start";
-                      labelX = pt.x + 8;
-                    } else if (isLast) {
-                      textAnchor = "end";
-                      labelX = pt.x - 8;
-                    }
-
+                    const textAnchor = "middle";
+                    const labelX = pt.x;
                     const labelY = pt.y > padding.top + plotHeight - 25 ? pt.y - 10 : pt.y + 18;
                     return (
                       <g key={pt.sensor}>
@@ -1524,18 +1522,9 @@ export default function BowlView({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         />
-                        {overlayData.currentPoints.map((pt, i) => {
-                          const isFirst = i === 0;
-                          const isLast = i === overlayData.currentPoints.length - 1;
-                          let textAnchor = "middle";
-                          let labelX = pt.x;
-                          if (isFirst) {
-                            textAnchor = "start";
-                            labelX = pt.x + 8;
-                          } else if (isLast) {
-                            textAnchor = "end";
-                            labelX = pt.x - 8;
-                          }
+                        {overlayData.currentPoints.map((pt) => {
+                          const textAnchor = "middle";
+                          const labelX = pt.x;
                           const labelY = pt.y > padding.top + plotHeight - 25 ? pt.y - 10 : pt.y + 18;
                           return (
                             <g key={`current-pt-${pt.sensor}`}>
@@ -1601,20 +1590,9 @@ export default function BowlView({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         />
-                        {overlayData.repPoints.map((pt, i) => {
-                          const isFirst = i === 0;
-                          const isLast = i === overlayData.repPoints.length - 1;
-
-                          let textAnchor = "middle";
-                          let labelX = pt.x;
-                          if (isFirst) {
-                            textAnchor = "start";
-                            labelX = pt.x + 8;
-                          } else if (isLast) {
-                            textAnchor = "end";
-                            labelX = pt.x - 8;
-                          }
-
+                        {overlayData.repPoints.map((pt) => {
+                          const textAnchor = "middle";
+                          const labelX = pt.x;
                           const labelY = pt.y > padding.top + plotHeight - 25 ? pt.y - 10 : pt.y + 18;
                           return (
                             <g key={`rep-pt-${pt.sensor}`}>
