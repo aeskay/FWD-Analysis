@@ -235,15 +235,15 @@ export default function RepresentativeSlideGuide({
       num: "Slide 1",
       badge: "Context & Motivation",
       title: "Selection of Representative Deflection Basin for Modulus Backcalculation",
-      subtitle: "Why an actual physical station is required rather than a synthetic mathematical mean",
+      subtitle: "Why an actual physical station is required rather than a synthetic mathematical average",
       objective:
         "Establish why multi-layer elastic backcalculation requires a real, physically measured deflection basin rather than an artificial section mean.",
       bullets: [
-        "Falling Weight Deflectometer (FWD) non-destructively evaluates pavement structural capacity across 100% of tested stations.",
-        "Backcalculation tools (MODULUS, BAKFAA, EVERCALC, ELMOD) apply Multi-Layer Elastic Theory (MLET) or Finite Element modeling to estimate layer moduli (E₁, E₂, E_subgrade).",
-        "Pavement materials exhibit non-linear, stress-dependent behavior (e.g., granular base hardening and subgrade softening).",
-        "Arithmetic averaging of deflections smooths out physical layer interactions and often yields non-convergent or unphysical backcalculated moduli.",
-        `Objective: Identify the single real station (Station ${repStationId}) out of ${stationCount} tested stations whose complete basin shape best represents the central tendency of the section.`,
+        "Falling Weight Deflectometer (FWD) non-destructively evaluates pavement structural capacity across all tested locations.",
+        "Backcalculation tools (MODULUS, BAKFAA, EVERCALC, ELMOD) apply Multi-Layer Elastic Theory (MLET) to estimate layer elastic moduli (E_AC, E_Base, E_Subgrade).",
+        "Pavement materials exhibit non-linear, stress-dependent behavior (granular base hardening and subgrade softening).",
+        "Averaging is NOT Real Data: Simply averaging deflections creates an artificial synthetic bowl that does not exist physically and distorts non-linear layer interactions.",
+        "Engineering Objective: Use rigorous statistical evaluation to identify a real, physically measured station whose entire basin shape best represents the section central tendency.",
       ],
       latex: [
         {
@@ -254,7 +254,7 @@ export default function RepresentativeSlideGuide({
       ],
       speakerNotes:
         "Explain that in pavement engineering practice, we never backcalculate an 'average bowl' because mathematical averaging creates a fictitious pavement structure. Instead, our goal is to find the single real, physically tested station that sits at the true structural center of the test section.",
-      chartCaption: "Section Deflection Bowl Scatter: Displays all tested stations, the synthetic mathematical section average, and the chosen representative station.",
+      chartCaption: "Section Deflection Basins: Comparison between all measured basins, the artificial mathematical average, and the selected representative basin.",
       recommendedChart: "all_overlay",
     },
     {
@@ -541,13 +541,15 @@ export default function RepresentativeSlideGuide({
   };
 
   // -------------------------------------------------------------
-  // REUSABLE BOTTOM-RIGHT LEGEND WITH SOLID BLACK BORDER
+  // REUSABLE BOTTOM-RIGHT COMPACT LEGEND WITH 1px BLACK BORDER
   // -------------------------------------------------------------
   const renderBottomRightLegend = (items) => {
-    const legendWidth = 230;
-    const legendHeight = 16 + items.length * 20;
-    const legendX = pad.left + plotW - legendWidth - 14;
-    const legendY = pad.top + plotH - legendHeight - 14;
+    const rowHeight = 15;
+    const paddingV = 7;
+    const legendWidth = 145;
+    const legendHeight = paddingV * 2 + (items.length - 1) * rowHeight;
+    const legendX = pad.left + plotW - legendWidth - 8;
+    const legendY = pad.top + plotH - legendHeight - 8;
 
     return (
       <g transform={`translate(${legendX}, ${legendY})`}>
@@ -559,38 +561,38 @@ export default function RepresentativeSlideGuide({
           height={legendHeight}
           fill="rgba(255, 255, 255, 0.96)"
           stroke="#000000"
-          strokeWidth="1.5"
-          rx="3"
+          strokeWidth="1"
+          rx="2"
         />
         {items.map((item, idx) => {
-          const itemY = 16 + idx * 20;
+          const itemY = paddingV + idx * rowHeight;
           return (
             <g key={item.id}>
               {item.type === "solid-green" && (
                 <>
-                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#16a34a" strokeWidth="3" />
-                  <circle cx="23" cy={itemY} r="3.5" fill="#16a34a" stroke="#ffffff" strokeWidth="1" />
+                  <line x1="8" y1={itemY} x2="22" y2={itemY} stroke="#16a34a" strokeWidth="2.5" />
+                  <circle cx="15" cy={itemY} r="2.5" fill="#16a34a" />
                 </>
               )}
               {item.type === "dashed-red" && (
                 <>
-                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#dc2626" strokeWidth="2" strokeDasharray="5 2.5" />
-                  <circle cx="23" cy={itemY} r="3" fill="#dc2626" stroke="#ffffff" strokeWidth="1" />
+                  <line x1="8" y1={itemY} x2="22" y2={itemY} stroke="#dc2626" strokeWidth="1.8" strokeDasharray="3 2" />
+                  <circle cx="15" cy={itemY} r="2" fill="#dc2626" />
                 </>
               )}
               {item.type === "solid-blue" && (
                 <>
-                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#2563eb" strokeWidth="2.5" />
-                  <circle cx="23" cy={itemY} r="3" fill="#2563eb" stroke="#ffffff" strokeWidth="1" />
+                  <line x1="8" y1={itemY} x2="22" y2={itemY} stroke="#2563eb" strokeWidth="2.5" />
+                  <circle cx="15" cy={itemY} r="2.5" fill="#2563eb" />
                 </>
               )}
               {item.type === "thin-black" && (
-                <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#000000" strokeWidth="1.2" opacity="0.6" />
+                <line x1="8" y1={itemY} x2="22" y2={itemY} stroke="#000000" strokeWidth="1.2" opacity="0.6" />
               )}
               <text
-                x="42"
-                y={itemY + 4}
-                fontSize="11"
+                x="28"
+                y={itemY + 3.5}
+                fontSize="9.5"
                 fontFamily="Arial, sans-serif"
                 fill="#000000"
                 fontWeight={item.type === "thin-black" ? "normal" : "600"}
@@ -1153,7 +1155,7 @@ export default function RepresentativeSlideGuide({
                     textRendering="geometricPrecision"
                   >
                     {/* Common Gridlines, Inner Ticks, and Axis Titles */}
-                    {renderCommonGridAndAxes(`Section Deflection Bowl Scatter (${stationCount} Stations)`)}
+                    {renderCommonGridAndAxes("Section Deflection Basins: Mean vs. Representative")}
 
                     {/* 1. All Station Locations (Thin Black Lines) */}
                     {stationPaths.map((sp) => (
@@ -1191,7 +1193,7 @@ export default function RepresentativeSlideGuide({
                       </>
                     )}
 
-                    {/* 3. Representative Sample (Solid Green Line + Circles + Values) */}
+                    {/* 3. Representative Sample (Solid Green Line + Circles, NO cluttered text numbers) */}
                     {repPoints.length > 0 && (
                       <>
                         <path
@@ -1202,33 +1204,17 @@ export default function RepresentativeSlideGuide({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         />
-                        {repPoints.map((pt) => {
-                          const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
-                          return (
-                            <g key={`rep-pt-${pt.sensor}`}>
-                              <circle
-                                cx={pt.x}
-                                cy={pt.y}
-                                r="5"
-                                fill="#16a34a"
-                                stroke="#ffffff"
-                                strokeWidth="2"
-                              />
-                              <text
-                                x={pt.x}
-                                y={labelY}
-                                textAnchor="middle"
-                                fontSize="12"
-                                fontWeight="normal"
-                                fill="#16a34a"
-                                fontFamily="Arial, sans-serif"
-                                shapeRendering="auto"
-                              >
-                                {pt.val.toFixed(2)}
-                              </text>
-                            </g>
-                          );
-                        })}
+                        {repPoints.map((pt) => (
+                          <circle
+                            key={`rep-pt-${pt.sensor}`}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="4.5"
+                            fill="#16a34a"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
                       </>
                     )}
 
@@ -1243,21 +1229,21 @@ export default function RepresentativeSlideGuide({
                       strokeWidth="1.5"
                     />
 
-                    {/* Bottom-Right Legend with Solid Black Border */}
+                    {/* Bottom-Right Compact Legend */}
                     {renderBottomRightLegend([
                       {
                         id: "rep",
-                        label: `Representative (STA ${repStationId})`,
+                        label: "Representative Basin",
                         type: "solid-green",
                       },
                       {
                         id: "mean",
-                        label: "Section Mean",
+                        label: "Mathematical Average",
                         type: "dashed-red",
                       },
                       {
                         id: "all",
-                        label: `All Stations (${stationCount})`,
+                        label: "Measured Basins",
                         type: "thin-black",
                       },
                     ])}
@@ -1536,7 +1522,7 @@ export default function RepresentativeSlideGuide({
                         {renderBottomRightLegend([
                           {
                             id: "rep-rmse",
-                            label: `Representative (STA ${repStationId})`,
+                            label: "Representative Basin",
                             type: "solid-blue",
                           },
                           {
@@ -1644,7 +1630,7 @@ export default function RepresentativeSlideGuide({
                     {renderBottomRightLegend([
                       {
                         id: "rep",
-                        label: `Representative (STA ${repStationId})`,
+                        label: "Representative Basin",
                         type: "solid-green",
                       },
                       {
@@ -1735,7 +1721,7 @@ export default function RepresentativeSlideGuide({
                     {renderBottomRightLegend([
                       {
                         id: "rep",
-                        label: `Representative (STA ${repStationId})`,
+                        label: "Representative Basin",
                         type: "solid-green",
                       },
                     ])}
