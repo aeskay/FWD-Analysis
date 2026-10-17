@@ -1262,7 +1262,7 @@ export default function BowlView({
           if (showRepresentative && sectionStats?.representative) {
             legendItems.push({
               id: "rep",
-              label: `Representative (${sectionStats.representative.row.StationID})`,
+              label: `Representative (STA ${sectionStats.representative.row.StationID})`,
               type: "solid-green",
             });
           }
@@ -1365,7 +1365,7 @@ export default function BowlView({
                   />
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 500 }}>
                     <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
-                    Representative ({sectionStats?.representative?.row.StationID ?? "—"})
+                    Representative (STA {sectionStats?.representative?.row.StationID ?? "—"})
                   </span>
                 </label>
 
