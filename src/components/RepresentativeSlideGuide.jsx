@@ -1629,6 +1629,13 @@ export default function RepresentativeSlideGuide({
                           const by = pad.top + plotH - bHeight;
                           const isThisRep = item.originalIdx === rep?.originalIdx;
                           const showLabel = idx % step === 0 || idx === count - 1;
+                          const rmseValStr = item.rmse.toFixed(2);
+                          const fitsInside = bHeight >= 34;
+                          const valY = fitsInside ? by + 5 : by - 4;
+                          const valAnchor = fitsInside ? "end" : "start";
+                          const valFill = fitsInside ? "#ffffff" : isThisRep ? "#2563eb" : "#000000";
+                          const valFontSize = bWidth >= 12 ? 8.5 : bWidth >= 9 ? 7.5 : 6.5;
+                          const arrowBaseY = fitsInside ? by - 4 : by - 32;
 
                           return (
                             <g key={item.originalIdx}>
@@ -1638,18 +1645,38 @@ export default function RepresentativeSlideGuide({
                                 width={bWidth}
                                 height={bHeight}
                                 fill={isThisRep ? "#2563eb" : "#000000"}
-                              />
+                              >
+                                <title>Station {item.row.StationID}: {rmseValStr} mils</title>
+                              </rect>
+
+                              {/* Vertical RMSE Value on the Bar */}
+                              {bWidth >= 5 && (
+                                <text
+                                  x={cx}
+                                  y={valY}
+                                  textAnchor={valAnchor}
+                                  dominantBaseline="central"
+                                  fontSize={valFontSize}
+                                  fontWeight="bold"
+                                  fill={valFill}
+                                  fontFamily="Arial, sans-serif"
+                                  shapeRendering="auto"
+                                  transform={`rotate(-90 ${cx} ${valY})`}
+                                >
+                                  {rmseValStr}
+                                </text>
+                              )}
 
                               {/* Indicator arrow & callout for Representative Station */}
                               {isThisRep && (
                                 <g>
                                   <polygon
-                                    points={`${cx},${by - 4} ${cx - 5},${by - 12} ${cx + 5},${by - 12}`}
+                                    points={`${cx},${arrowBaseY} ${cx - 5},${arrowBaseY - 8} ${cx + 5},${arrowBaseY - 8}`}
                                     fill="#2563eb"
                                   />
                                   <text
                                     x={cx}
-                                    y={by - 15}
+                                    y={arrowBaseY - 11}
                                     textAnchor="middle"
                                     fontSize="11"
                                     fontWeight="bold"

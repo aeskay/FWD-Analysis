@@ -1035,6 +1035,12 @@ export default function BowlView({
                       const bHeight = maxRmse > 0 ? (item.rmse / maxRmse) * pHeight : 0;
                       const by = pad.top + pHeight - bHeight;
                       const showLabel = idx % step === 0 || idx === count - 1;
+                      const rmseValStr = item.rmse.toFixed(2);
+                      const fitsInside = bHeight >= 34;
+                      const valY = fitsInside ? by + 5 : by - 4;
+                      const valAnchor = fitsInside ? "end" : "start";
+                      const valFill = fitsInside ? "#ffffff" : "#000000";
+                      const valFontSize = barWidth >= 12 ? 8.5 : barWidth >= 9 ? 7.5 : 6.5;
 
                       return (
                         <g key={item.originalIdx}>
@@ -1046,8 +1052,26 @@ export default function BowlView({
                             rx={0}
                             fill="#000000"
                           >
-                            <title>Station {item.row.StationID}</title>
+                            <title>Station {item.row.StationID}: {rmseValStr} mils</title>
                           </rect>
+
+                          {/* Vertical RMSE Value on the Bar */}
+                          {barWidth >= 5 && (
+                            <text
+                              x={cx}
+                              y={valY}
+                              textAnchor={valAnchor}
+                              dominantBaseline="central"
+                              fontSize={valFontSize}
+                              fontWeight="bold"
+                              fill={valFill}
+                              fontFamily="Arial, sans-serif"
+                              shapeRendering="auto"
+                              transform={`rotate(-90 ${cx} ${valY})`}
+                            >
+                              {rmseValStr}
+                            </text>
+                          )}
 
                           {/* X-axis Station Ticks & Rotated Label (-90deg centered on bar) */}
                           {showLabel && (
