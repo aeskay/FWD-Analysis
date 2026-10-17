@@ -2,13 +2,13 @@ import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useToast } from "../context/ToastContext";
 
 /**
- * Utility to convert SVG element into a high-resolution Canvas / PNG blob
+ * Utility to convert SVG element into a high-resolution Canvas / PNG blob (3x ultra-sharp)
  */
 async function exportSvgAsCanvas(svgEl, scale = 3) {
   if (!svgEl) return null;
   const bbox = svgEl.getBoundingClientRect();
-  const width = bbox.width || 600;
-  const height = bbox.height || 360;
+  const width = bbox.width || 640;
+  const height = bbox.height || 400;
 
   const clone = svgEl.cloneNode(true);
   clone.setAttribute("width", String(width));
@@ -157,14 +157,27 @@ export default function RepresentativeSlideGuide({
   const repRmse = rep?.rmse !== undefined ? rep.rmse.toFixed(3) : "—";
   const stationCount = rows.length;
 
-  // Chart dimension constants for crisp rendering
-  const chartW = 560;
-  const chartH = 320;
-  const pad = { top: 30, right: 25, bottom: 45, left: 60 };
-  const plotW = chartW - pad.left - pad.right;
-  const plotH = chartH - pad.top - pad.bottom;
+  // ── EXACT DIMENSIONS MATCHING BOWLVIEW ──
+  const chartW = 640;
+  const chartH = 400;
+  const pad = { top: 40, right: 35, bottom: 65, left: 75 };
+  const plotW = chartW - pad.left - pad.right; // 530
+  const plotH = chartH - pad.top - pad.bottom; // 295
   const xGap = 28;
   const availW = plotW - 2 * xGap;
+
+  // Maximum deflection calculation
+  const maxDeflection = useMemo(() => {
+    if (sectionStats?.maxDeflection) return sectionStats.maxDeflection;
+    let m = 0;
+    rows.forEach((r) => {
+      deflectionCols.forEach((c) => {
+        const val = parseFloat(r[c]);
+        if (!isNaN(val) && val > m) m = val;
+      });
+    });
+    return m > 0 ? m * 1.15 : 30;
+  }, [rows, deflectionCols, sectionStats]);
 
   // Helper to map sensor deflections to SVG points
   const getSvgPoints = (sensorVals, maxVal) => {
@@ -176,18 +189,6 @@ export default function RepresentativeSlideGuide({
       return { sensor: col, val: v, x, y };
     });
   };
-
-  const maxDeflection = useMemo(() => {
-    if (sectionStats?.maxDeflection) return sectionStats.maxDeflection;
-    let m = 0;
-    rows.forEach((r) => {
-      deflectionCols.forEach((c) => {
-        const val = parseFloat(r[c]);
-        if (!isNaN(val) && val > m) m = val;
-      });
-    });
-    return m > 0 ? m * 1.1 : 30;
-  }, [rows, deflectionCols, sectionStats]);
 
   // Points for Representative Station
   const repPoints = useMemo(() => {
@@ -208,6 +209,15 @@ export default function RepresentativeSlideGuide({
     });
     return getSvgPoints(vals, maxDeflection);
   }, [sectionStats, deflectionCols, maxDeflection]);
+
+  // Station paths for All Stations overlay
+  const stationPaths = useMemo(() => {
+    return rows.map((r, idx) => {
+      const pts = getSvgPoints(r, maxDeflection);
+      const d = pts.reduce((acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`), "");
+      return { id: r.StationID ?? idx, d };
+    });
+  }, [rows, maxDeflection, deflectionCols]);
 
   // Path generator
   const makePathD = (pts) => {
@@ -244,7 +254,7 @@ export default function RepresentativeSlideGuide({
       ],
       speakerNotes:
         "Explain that in pavement engineering practice, we never backcalculate an 'average bowl' because mathematical averaging creates a fictitious pavement structure. Instead, our goal is to find the single real, physically tested station that sits at the true structural center of the test section.",
-      chartCaption: "All Basin Profiles Overlay: Illustrates the natural physical scatter across all tested stations and the necessity of selecting one representative physical bowl.",
+      chartCaption: "Section Deflection Bowl Scatter: Displays all tested stations, the synthetic mathematical section average, and the chosen representative station.",
       recommendedChart: "all_overlay",
     },
     {
@@ -393,6 +403,208 @@ export default function RepresentativeSlideGuide({
     return out;
   };
 
+  // -------------------------------------------------------------
+  // REUSABLE AXIS ELEMENTS & INNER TICKS (MATCHING BOWLVIEW)
+  // -------------------------------------------------------------
+  const renderCommonGridAndAxes = (titleText) => {
+    return (
+      <>
+        {/* Chart Title */}
+        <text
+          x={chartW / 2}
+          y={24}
+          textAnchor="middle"
+          fontSize="16"
+          fontWeight="bold"
+          fill="#000000"
+          fontFamily="Arial, sans-serif"
+          shapeRendering="auto"
+        >
+          {titleText}
+        </text>
+
+        {/* Horizontal Grid Lines & Y-axis Inner Ticks */}
+        {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+          const y = pad.top + pct * plotH;
+          const val = (pct * maxDeflection).toFixed(1);
+          return (
+            <g key={`y-grid-${pct}`}>
+              <line
+                x1={pad.left}
+                y1={y}
+                x2={pad.left + plotW}
+                y2={y}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              <line
+                x1={pad.left}
+                y1={y}
+                x2={pad.left + 6}
+                y2={y}
+                stroke="#000000"
+                strokeWidth="1.5"
+              />
+              <text
+                x={pad.left - 10}
+                y={y + 5}
+                textAnchor="end"
+                fontSize="14"
+                fill="#000000"
+                fontFamily="Arial, sans-serif"
+                shapeRendering="auto"
+              >
+                {val}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Vertical Grid Lines & X-axis Inner Ticks */}
+        {deflectionCols.map((col, idx) => {
+          const x = pad.left + xGap + (deflectionCols.length > 1 ? (idx / (deflectionCols.length - 1)) * availW : availW / 2);
+          return (
+            <g key={`x-grid-${col}`}>
+              <line
+                x1={x}
+                y1={pad.top}
+                x2={x}
+                y2={pad.top + plotH}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              <line
+                x1={x}
+                y1={pad.top + plotH}
+                x2={x}
+                y2={pad.top + plotH - 6}
+                stroke="#000000"
+                strokeWidth="1.5"
+              />
+              <text
+                x={x}
+                y={pad.top + plotH + 22}
+                textAnchor="middle"
+                fontSize="14"
+                fontWeight="normal"
+                fill="#000000"
+                fontFamily="Arial, sans-serif"
+                shapeRendering="auto"
+              >
+                {col}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* 4-sided Inner Box Border */}
+        <rect
+          x={pad.left}
+          y={pad.top}
+          width={plotW}
+          height={plotH}
+          fill="none"
+          stroke="#000000"
+          strokeWidth="1.5"
+        />
+
+        {/* Y-axis Title */}
+        <text
+          x={pad.left - 48}
+          y={pad.top + plotH / 2}
+          textAnchor="middle"
+          fontSize="16"
+          fontWeight="bold"
+          fill="#000000"
+          fontFamily="Arial, sans-serif"
+          shapeRendering="auto"
+          transform={`rotate(-90 ${pad.left - 48} ${pad.top + plotH / 2})`}
+        >
+          Deflection (mils)
+        </text>
+
+        {/* X-axis Title */}
+        <text
+          x={pad.left + plotW / 2}
+          y={chartH - 14}
+          textAnchor="middle"
+          fontSize="16"
+          fontWeight="bold"
+          fill="#000000"
+          fontFamily="Arial, sans-serif"
+          shapeRendering="auto"
+        >
+          Sensor
+        </text>
+      </>
+    );
+  };
+
+  // -------------------------------------------------------------
+  // REUSABLE BOTTOM-RIGHT LEGEND WITH SOLID BLACK BORDER
+  // -------------------------------------------------------------
+  const renderBottomRightLegend = (items) => {
+    const legendWidth = 230;
+    const legendHeight = 16 + items.length * 20;
+    const legendX = pad.left + plotW - legendWidth - 14;
+    const legendY = pad.top + plotH - legendHeight - 14;
+
+    return (
+      <g transform={`translate(${legendX}, ${legendY})`}>
+        {/* Solid Black Border around Legend Box */}
+        <rect
+          x="0"
+          y="0"
+          width={legendWidth}
+          height={legendHeight}
+          fill="rgba(255, 255, 255, 0.96)"
+          stroke="#000000"
+          strokeWidth="1.5"
+          rx="3"
+        />
+        {items.map((item, idx) => {
+          const itemY = 16 + idx * 20;
+          return (
+            <g key={item.id}>
+              {item.type === "solid-green" && (
+                <>
+                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#16a34a" strokeWidth="3" />
+                  <circle cx="23" cy={itemY} r="3.5" fill="#16a34a" stroke="#ffffff" strokeWidth="1" />
+                </>
+              )}
+              {item.type === "dashed-red" && (
+                <>
+                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#dc2626" strokeWidth="2" strokeDasharray="5 2.5" />
+                  <circle cx="23" cy={itemY} r="3" fill="#dc2626" stroke="#ffffff" strokeWidth="1" />
+                </>
+              )}
+              {item.type === "solid-blue" && (
+                <>
+                  <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#2563eb" strokeWidth="2.5" />
+                  <circle cx="23" cy={itemY} r="3" fill="#2563eb" stroke="#ffffff" strokeWidth="1" />
+                </>
+              )}
+              {item.type === "thin-black" && (
+                <line x1="12" y1={itemY} x2="34" y2={itemY} stroke="#000000" strokeWidth="1.2" opacity="0.6" />
+              )}
+              <text
+                x="42"
+                y={itemY + 4}
+                fontSize="11"
+                fontFamily="Arial, sans-serif"
+                fill="#000000"
+                fontWeight={item.type === "thin-black" ? "normal" : "600"}
+                shapeRendering="auto"
+              >
+                {item.label}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
+
   return (
     <div
       style={{
@@ -410,9 +622,9 @@ export default function RepresentativeSlideGuide({
     >
       <div
         style={{
-          width: "100%",
-          maxWidth: 1240,
-          height: "92vh",
+          width: "96vw",
+          maxWidth: 1400,
+          height: "94vh",
           background: "#ffffff",
           borderRadius: "16px",
           display: "flex",
@@ -606,7 +818,7 @@ export default function RepresentativeSlideGuide({
             overflowY: "auto",
             padding: "24px",
             display: "grid",
-            gridTemplateColumns: "1.1fr 1fr",
+            gridTemplateColumns: "minmax(380px, 1fr) minmax(580px, 1.25fr)",
             gap: "24px",
             background: "#ffffff",
           }}
@@ -858,7 +1070,7 @@ export default function RepresentativeSlideGuide({
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                    Live visual generated from active project data
+                    Exact visual style matching main FWD project charts (inner ticks, black borders, visible labels)
                   </div>
                 </div>
 
@@ -920,146 +1132,135 @@ export default function RepresentativeSlideGuide({
               <div
                 style={{
                   width: "100%",
-                  border: "1px solid #e2e8f0",
+                  border: "1px solid var(--border-subtle, #e2e8f0)",
                   borderRadius: "8px",
                   background: "#ffffff",
                   overflow: "hidden",
                   display: "flex",
                   justifyContent: "center",
-                  padding: "10px",
+                  padding: "12px",
                 }}
               >
-                {/* ── CHART 1: ALL BOWLS OVERLAY (SLIDE 1) ── */}
+                {/* ── CHART 1: ALL LOCATIONS OVERLAY + MEAN + REPRESENTATIVE SAMPLE (SLIDE 1) ── */}
                 {activeSlide === 1 && (
                   <svg
                     ref={chartRef1}
                     width={chartW}
                     height={chartH}
                     viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ display: "block", background: "#ffffff" }}
+                    style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
-                    <text
-                      x={chartW / 2}
-                      y={18}
-                      textAnchor="middle"
-                      fontSize="13"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                    >
-                      Pavement Deflection Bowl Scatter ({stationCount} Stations)
-                    </text>
+                    {/* Common Gridlines, Inner Ticks, and Axis Titles */}
+                    {renderCommonGridAndAxes(`Section Deflection Bowl Scatter (${stationCount} Stations)`)}
 
-                    {/* Grid lines */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
-                      const y = pad.top + pct * plotH;
-                      const val = (pct * maxDeflection).toFixed(1);
-                      return (
-                        <g key={pct}>
-                          <line
-                            x1={pad.left}
-                            y1={y}
-                            x2={pad.left + plotW}
-                            y2={y}
-                            stroke="#e2e8f0"
-                            strokeWidth="1"
-                          />
-                          <text
-                            x={pad.left - 6}
-                            y={y + 4}
-                            textAnchor="end"
-                            fontSize="9"
-                            fill="#64748b"
-                            fontFamily="Arial, sans-serif"
-                          >
-                            {val}
-                          </text>
-                        </g>
-                      );
-                    })}
+                    {/* 1. All Station Locations (Thin Black Lines) */}
+                    {stationPaths.map((sp) => (
+                      <path
+                        key={`station-${sp.id}`}
+                        d={sp.d}
+                        fill="none"
+                        stroke="#111827"
+                        strokeWidth="1.2"
+                        opacity="0.20"
+                      />
+                    ))}
 
-                    {/* All stations in light gray lines */}
-                    {rows.map((r, idx) => {
-                      const pts = getSvgPoints(r, maxDeflection);
-                      return (
-                        <path
-                          key={idx}
-                          d={makePathD(pts)}
-                          fill="none"
-                          stroke="#94a3b8"
-                          strokeWidth="1"
-                          strokeOpacity="0.4"
-                        />
-                      );
-                    })}
-
-                    {/* Section Mean in dashed red */}
+                    {/* 2. Mathematical Average / Section Mean (Dashed Red Line) */}
                     {meanPoints.length > 0 && (
-                      <path
-                        d={makePathD(meanPoints)}
-                        fill="none"
-                        stroke="#dc2626"
-                        strokeWidth="2.5"
-                        strokeDasharray="5,3"
-                      />
+                      <>
+                        <path
+                          d={makePathD(meanPoints)}
+                          fill="none"
+                          stroke="#dc2626"
+                          strokeWidth="2"
+                          strokeDasharray="6 3"
+                        />
+                        {meanPoints.map((pt) => (
+                          <circle
+                            key={`mean-pt-${pt.sensor}`}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="3.5"
+                            fill="#dc2626"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
+                      </>
                     )}
 
-                    {/* Representative Station in solid green */}
+                    {/* 3. Representative Sample (Solid Green Line + Circles + Values) */}
                     {repPoints.length > 0 && (
-                      <path
-                        d={makePathD(repPoints)}
-                        fill="none"
-                        stroke="#16a34a"
-                        strokeWidth="3"
-                      />
+                      <>
+                        <path
+                          d={makePathD(repPoints)}
+                          fill="none"
+                          stroke="#16a34a"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        {repPoints.map((pt) => {
+                          const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
+                          return (
+                            <g key={`rep-pt-${pt.sensor}`}>
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r="5"
+                                fill="#16a34a"
+                                stroke="#ffffff"
+                                strokeWidth="2"
+                              />
+                              <text
+                                x={pt.x}
+                                y={labelY}
+                                textAnchor="middle"
+                                fontSize="12"
+                                fontWeight="normal"
+                                fill="#16a34a"
+                                fontFamily="Arial, sans-serif"
+                                shapeRendering="auto"
+                              >
+                                {pt.val.toFixed(2)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </>
                     )}
 
-                    {/* Chart Box */}
+                    {/* 4-sided Inner Box Border (rendered again on top for clean edges) */}
                     <rect
                       x={pad.left}
                       y={pad.top}
                       width={plotW}
                       height={plotH}
                       fill="none"
-                      stroke="#0f172a"
-                      strokeWidth="1.2"
+                      stroke="#000000"
+                      strokeWidth="1.5"
                     />
 
-                    {/* X Ticks */}
-                    {deflectionCols.map((c, i) => {
-                      const x = pad.left + xGap + (deflectionCols.length > 1 ? (i / (deflectionCols.length - 1)) * availW : availW / 2);
-                      return (
-                        <g key={c}>
-                          <line x1={x} y1={pad.top + plotH} x2={x} y2={pad.top + plotH + 4} stroke="#0f172a" strokeWidth="1" />
-                          <text x={x} y={pad.top + plotH + 16} textAnchor="middle" fontSize="10" fill="#0f172a" fontFamily="Arial, sans-serif">
-                            {c}
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    {/* Y Title */}
-                    <text
-                      x={pad.left - 36}
-                      y={pad.top + plotH / 2}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                      transform={`rotate(-90 ${pad.left - 36} ${pad.top + plotH / 2})`}
-                    >
-                      Deflection (mils)
-                    </text>
-
-                    {/* Mini Legend */}
-                    <rect x={pad.left + plotW - 175} y={pad.top + 10} width={165} height={60} fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" rx="4" />
-                    <line x1={pad.left + plotW - 165} y1={pad.top + 24} x2={pad.left + plotW - 145} y2={pad.top + 24} stroke="#94a3b8" strokeWidth="2" />
-                    <text x={pad.left + plotW - 140} y={pad.top + 27} fontSize="10" fill="#475569" fontFamily="Arial, sans-serif">All Stations ({stationCount})</text>
-                    <line x1={pad.left + plotW - 165} y1={pad.top + 40} x2={pad.left + plotW - 145} y2={pad.top + 40} stroke="#dc2626" strokeWidth="2" strokeDasharray="4,2" />
-                    <text x={pad.left + plotW - 140} y={pad.top + 43} fontSize="10" fill="#dc2626" fontWeight="bold" fontFamily="Arial, sans-serif">Section Mean (D̄)</text>
-                    <line x1={pad.left + plotW - 165} y1={pad.top + 56} x2={pad.left + plotW - 145} y2={pad.top + 56} stroke="#16a34a" strokeWidth="2.5" />
-                    <text x={pad.left + plotW - 140} y={pad.top + 59} fontSize="10" fill="#16a34a" fontWeight="bold" fontFamily="Arial, sans-serif">Rep Station {repStationId}</text>
+                    {/* Bottom-Right Legend with Solid Black Border */}
+                    {renderBottomRightLegend([
+                      {
+                        id: "rep",
+                        label: `Representative (STA ${repStationId})`,
+                        type: "solid-green",
+                      },
+                      {
+                        id: "mean",
+                        label: "Section Mean",
+                        type: "dashed-red",
+                      },
+                      {
+                        id: "all",
+                        label: `All Stations (${stationCount})`,
+                        type: "thin-black",
+                      },
+                    ])}
                   </svg>
                 )}
 
@@ -1070,215 +1271,283 @@ export default function RepresentativeSlideGuide({
                     width={chartW}
                     height={chartH}
                     viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ display: "block", background: "#ffffff" }}
+                    style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
-                    <text
-                      x={chartW / 2}
-                      y={18}
-                      textAnchor="middle"
-                      fontSize="13"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                    >
-                      Baseline Normalized Mean Deflection Basin (9,000 lbs)
-                    </text>
-
-                    {/* Grid lines */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
-                      const y = pad.top + pct * plotH;
-                      const val = (pct * maxDeflection).toFixed(1);
-                      return (
-                        <g key={pct}>
-                          <line x1={pad.left} y1={y} x2={pad.left + plotW} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-                          <text x={pad.left - 6} y={y + 4} textAnchor="end" fontSize="9" fill="#64748b" fontFamily="Arial, sans-serif">
-                            {val}
-                          </text>
-                        </g>
-                      );
-                    })}
+                    {/* Common Gridlines, Inner Ticks, and Axis Titles */}
+                    {renderCommonGridAndAxes("Baseline Normalized Mean Deflection Basin (9,000 lbs)")}
 
                     {/* Shaded Area under Mean */}
                     {meanPoints.length > 0 && (
                       <path
                         d={`${makePathD(meanPoints)} L ${meanPoints[meanPoints.length - 1].x} ${pad.top} L ${meanPoints[0].x} ${pad.top} Z`}
-                        fill="#fee2e2"
-                        fillOpacity="0.45"
+                        fill="#dc2626"
+                        fillOpacity="0.08"
                       />
                     )}
 
                     {/* Mean line */}
                     {meanPoints.length > 0 && (
-                      <path d={makePathD(meanPoints)} fill="none" stroke="#dc2626" strokeWidth="2.5" />
+                      <path
+                        d={makePathD(meanPoints)}
+                        fill="none"
+                        stroke="#dc2626"
+                        strokeWidth="2.5"
+                        strokeDasharray="6 3"
+                      />
                     )}
 
-                    {/* Points & mean labels */}
-                    {meanPoints.map((pt) => (
-                      <g key={pt.sensor}>
-                        <circle cx={pt.x} cy={pt.y} r="4.5" fill="#dc2626" stroke="#ffffff" strokeWidth="1.5" />
-                        <text
-                          x={pt.x}
-                          y={pt.y > pad.top + plotH - 20 ? pt.y - 8 : pt.y + 14}
-                          textAnchor="middle"
-                          fontSize="9.5"
-                          fontWeight="bold"
-                          fill="#991b1b"
-                          fontFamily="Arial, sans-serif"
-                        >
-                          {pt.val.toFixed(2)}
-                        </text>
-                      </g>
-                    ))}
-
-                    {/* Chart Box */}
-                    <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#0f172a" strokeWidth="1.2" />
-
-                    {/* X Ticks */}
-                    {deflectionCols.map((c, i) => {
-                      const x = pad.left + xGap + (deflectionCols.length > 1 ? (i / (deflectionCols.length - 1)) * availW : availW / 2);
+                    {/* Points & Deflection values */}
+                    {meanPoints.map((pt) => {
+                      const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
                       return (
-                        <g key={c}>
-                          <line x1={x} y1={pad.top + plotH} x2={x} y2={pad.top + plotH + 4} stroke="#0f172a" strokeWidth="1" />
-                          <text x={x} y={pad.top + plotH + 16} textAnchor="middle" fontSize="10" fill="#0f172a" fontFamily="Arial, sans-serif">
-                            {c}
+                        <g key={`mean-pt-${pt.sensor}`}>
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="4.5"
+                            fill="#dc2626"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                          <text
+                            x={pt.x}
+                            y={labelY}
+                            textAnchor="middle"
+                            fontSize="12"
+                            fontWeight="bold"
+                            fill="#991b1b"
+                            fontFamily="Arial, sans-serif"
+                            shapeRendering="auto"
+                          >
+                            {pt.val.toFixed(2)}
                           </text>
                         </g>
                       );
                     })}
 
-                    <text
-                      x={pad.left - 36}
-                      y={pad.top + plotH / 2}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                      transform={`rotate(-90 ${pad.left - 36} ${pad.top + plotH / 2})`}
-                    >
-                      Deflection (mils)
-                    </text>
+                    {/* 4-sided Inner Box Border */}
+                    <rect
+                      x={pad.left}
+                      y={pad.top}
+                      width={plotW}
+                      height={plotH}
+                      fill="none"
+                      stroke="#000000"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Bottom-Right Legend */}
+                    {renderBottomRightLegend([
+                      {
+                        id: "mean",
+                        label: "Section Mean (D̄)",
+                        type: "dashed-red",
+                      },
+                    ])}
                   </svg>
                 )}
 
                 {/* ── CHART 3: STATION-BY-STATION RMSE BAR CHART (SLIDE 3) ── */}
                 {activeSlide === 3 && (
-                  <svg
-                    ref={chartRef3}
-                    width={chartW}
-                    height={chartH}
-                    viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ display: "block", background: "#ffffff" }}
-                  >
-                    <text
-                      x={chartW / 2}
-                      y={18}
-                      textAnchor="middle"
-                      fontSize="13"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                    >
-                      RMSE Distance from Section Mean Across All Stations
-                    </text>
+                  (() => {
+                    const rowsDist = sectionStats?.rowsWithDistance || [];
+                    const count = rowsDist.length;
+                    const maxRmse = Math.max(...rowsDist.map((r) => r.rmse).filter(isFinite), 1) * 1.18;
+                    const slotW = count > 1 ? plotW / count : plotW;
+                    const bWidth = Math.max(2.5, Math.min(14, slotW - 2));
+                    const stationFontSize = count > 60 ? 8 : count > 35 ? 9 : 10;
+                    const step = count > 80 ? Math.ceil(count / 50) : 1;
 
-                    {(() => {
-                      const rowsDist = sectionStats?.rowsWithDistance || [];
-                      const count = rowsDist.length;
-                      if (count === 0) return null;
-                      const maxRmse = Math.max(...rowsDist.map((r) => r.rmse).filter(isFinite), 1) * 1.15;
-                      const slotW = plotW / count;
-                      const bWidth = Math.max(2, Math.min(14, slotW * 0.75));
+                    return (
+                      <svg
+                        ref={chartRef3}
+                        width={chartW}
+                        height={chartH}
+                        viewBox={`0 0 ${chartW} ${chartH}`}
+                        style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                        shapeRendering="crispEdges"
+                        textRendering="geometricPrecision"
+                      >
+                        {/* Title */}
+                        <text
+                          x={chartW / 2}
+                          y={24}
+                          textAnchor="middle"
+                          fontSize="16"
+                          fontWeight="bold"
+                          fill="#000000"
+                          fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
+                        >
+                          Station RMSE Distance from Section Mean
+                        </text>
 
-                      return (
-                        <g>
-                          {/* Grid lines */}
-                          {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
-                            const y = pad.top + (1 - pct) * plotH;
-                            const val = (pct * maxRmse).toFixed(2);
-                            return (
-                              <g key={pct}>
-                                <line x1={pad.left} y1={y} x2={pad.left + plotW} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-                                <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize="9" fill="#64748b" fontFamily="Arial, sans-serif">
-                                  {val}
-                                </text>
-                              </g>
-                            );
-                          })}
+                        {/* Horizontal Gridlines & Y-axis Inner Ticks */}
+                        {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+                          const y = pad.top + (1 - pct) * plotH;
+                          const val = (pct * maxRmse).toFixed(2);
+                          return (
+                            <g key={`rmse-grid-${pct}`}>
+                              <line
+                                x1={pad.left}
+                                y1={y}
+                                x2={pad.left + plotW}
+                                y2={y}
+                                stroke="#e5e7eb"
+                                strokeWidth="1"
+                              />
+                              <line
+                                x1={pad.left}
+                                y1={y}
+                                x2={pad.left + 6}
+                                y2={y}
+                                stroke="#000000"
+                                strokeWidth="1.5"
+                              />
+                              <text
+                                x={pad.left - 10}
+                                y={y + 5}
+                                textAnchor="end"
+                                fontSize="14"
+                                fill="#000000"
+                                fontFamily="Arial, sans-serif"
+                                shapeRendering="auto"
+                              >
+                                {val}
+                              </text>
+                            </g>
+                          );
+                        })}
 
-                          {/* Bars */}
-                          {rowsDist.map((item, idx) => {
-                            const cx = pad.left + idx * slotW + slotW / 2;
-                            const bx = cx - bWidth / 2;
-                            const bH = maxRmse > 0 ? (item.rmse / maxRmse) * plotH : 0;
-                            const by = pad.top + plotH - bH;
-                            const isThisRep = item.originalIdx === rep?.originalIdx;
+                        {/* Station Bars & Ticks */}
+                        {rowsDist.map((item, idx) => {
+                          const cx = pad.left + idx * slotW + slotW / 2;
+                          const bx = cx - bWidth / 2;
+                          const bHeight = maxRmse > 0 ? (item.rmse / maxRmse) * plotH : 0;
+                          const by = pad.top + plotH - bHeight;
+                          const isThisRep = item.originalIdx === rep?.originalIdx;
+                          const showLabel = idx % step === 0 || idx === count - 1;
 
-                            return (
-                              <g key={item.originalIdx}>
-                                <rect
-                                  x={bx}
-                                  y={by}
-                                  width={bWidth}
-                                  height={bH}
-                                  fill={isThisRep ? "#2563eb" : "#94a3b8"}
-                                />
-                                {isThisRep && (
-                                  <g>
-                                    <polygon
-                                      points={`${cx},${by - 4} ${cx - 5},${by - 12} ${cx + 5},${by - 12}`}
-                                      fill="#2563eb"
-                                    />
-                                    <text
-                                      x={cx}
-                                      y={by - 15}
-                                      textAnchor="middle"
-                                      fontSize="10"
-                                      fontWeight="bold"
-                                      fill="#1d4ed8"
-                                      fontFamily="Arial, sans-serif"
-                                    >
-                                      Rep ({item.row.StationID})
-                                    </text>
-                                  </g>
-                                )}
-                              </g>
-                            );
-                          })}
+                          return (
+                            <g key={item.originalIdx}>
+                              <rect
+                                x={bx}
+                                y={by}
+                                width={bWidth}
+                                height={bHeight}
+                                fill={isThisRep ? "#2563eb" : "#000000"}
+                              />
 
-                          {/* Chart Box */}
-                          <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#0f172a" strokeWidth="1.2" />
+                              {/* Indicator arrow & callout for Representative Station */}
+                              {isThisRep && (
+                                <g>
+                                  <polygon
+                                    points={`${cx},${by - 4} ${cx - 5},${by - 12} ${cx + 5},${by - 12}`}
+                                    fill="#2563eb"
+                                  />
+                                  <text
+                                    x={cx}
+                                    y={by - 15}
+                                    textAnchor="middle"
+                                    fontSize="11"
+                                    fontWeight="bold"
+                                    fill="#2563eb"
+                                    fontFamily="Arial, sans-serif"
+                                    shapeRendering="auto"
+                                  >
+                                    Rep ({item.row.StationID})
+                                  </text>
+                                </g>
+                              )}
 
-                          {/* Y Title */}
-                          <text
-                            x={pad.left - 36}
-                            y={pad.top + plotH / 2}
-                            textAnchor="middle"
-                            fontSize="11"
-                            fontWeight="bold"
-                            fill="#0f172a"
-                            fontFamily="Arial, sans-serif"
-                            transform={`rotate(-90 ${pad.left - 36} ${pad.top + plotH / 2})`}
-                          >
-                            RMSE (mils)
-                          </text>
+                              {/* X-axis Ticks & Rotated Label */}
+                              {showLabel && (
+                                <g>
+                                  <line
+                                    x1={cx}
+                                    y1={pad.top + plotH}
+                                    x2={cx}
+                                    y2={pad.top + plotH + 4}
+                                    stroke="#000000"
+                                    strokeWidth="1"
+                                  />
+                                  <text
+                                    x={cx}
+                                    y={pad.top + plotH + 6}
+                                    textAnchor="end"
+                                    dominantBaseline="central"
+                                    fontSize={stationFontSize}
+                                    fill="#000000"
+                                    fontFamily="Arial, sans-serif"
+                                    shapeRendering="auto"
+                                    transform={`rotate(-90 ${cx} ${pad.top + plotH + 6})`}
+                                  >
+                                    {item.row.StationID ?? idx + 1}
+                                  </text>
+                                </g>
+                              )}
+                            </g>
+                          );
+                        })}
 
-                          {/* X Title */}
-                          <text
-                            x={pad.left + plotW / 2}
-                            y={chartH - 10}
-                            textAnchor="middle"
-                            fontSize="11"
-                            fontWeight="bold"
-                            fill="#0f172a"
-                            fontFamily="Arial, sans-serif"
-                          >
-                            Pavement Test Station Sequence
-                          </text>
-                        </g>
-                      );
-                    })()}
-                  </svg>
+                        {/* 4-sided Inner Box Border */}
+                        <rect
+                          x={pad.left}
+                          y={pad.top}
+                          width={plotW}
+                          height={plotH}
+                          fill="none"
+                          stroke="#000000"
+                          strokeWidth="1.5"
+                        />
+
+                        {/* Y Title */}
+                        <text
+                          x={pad.left - 48}
+                          y={pad.top + plotH / 2}
+                          textAnchor="middle"
+                          fontSize="16"
+                          fontWeight="bold"
+                          fill="#000000"
+                          fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
+                          transform={`rotate(-90 ${pad.left - 48} ${pad.top + plotH / 2})`}
+                        >
+                          RMSE (mils)
+                        </text>
+
+                        {/* X Title */}
+                        <text
+                          x={pad.left + plotW / 2}
+                          y={chartH - 8}
+                          textAnchor="middle"
+                          fontSize="16"
+                          fontWeight="bold"
+                          fill="#000000"
+                          fontFamily="Arial, sans-serif"
+                          shapeRendering="auto"
+                        >
+                          Station
+                        </text>
+
+                        {/* Bottom-Right Legend */}
+                        {renderBottomRightLegend([
+                          {
+                            id: "rep-rmse",
+                            label: `Representative (STA ${repStationId})`,
+                            type: "solid-blue",
+                          },
+                          {
+                            id: "station-rmse",
+                            label: "Station Deviation",
+                            type: "thin-black",
+                          },
+                        ])}
+                      </svg>
+                    );
+                  })()
                 )}
 
                 {/* ── CHART 4: REP VS MEAN OVERLAY (SLIDE 4) ── */}
@@ -1288,89 +1557,102 @@ export default function RepresentativeSlideGuide({
                     width={chartW}
                     height={chartH}
                     viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ display: "block", background: "#ffffff" }}
+                    style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
-                    <text
-                      x={chartW / 2}
-                      y={18}
-                      textAnchor="middle"
-                      fontSize="13"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                    >
-                      Geometric Alignment: Representative Basin vs. Section Mean
-                    </text>
+                    {/* Common Gridlines, Inner Ticks, and Axis Titles */}
+                    {renderCommonGridAndAxes("Geometric Alignment: Representative Basin vs. Section Mean")}
 
-                    {/* Grid lines */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
-                      const y = pad.top + pct * plotH;
-                      const val = (pct * maxDeflection).toFixed(1);
-                      return (
-                        <g key={pct}>
-                          <line x1={pad.left} y1={y} x2={pad.left + plotW} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-                          <text x={pad.left - 6} y={y + 4} textAnchor="end" fontSize="9" fill="#64748b" fontFamily="Arial, sans-serif">
-                            {val}
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    {/* Section Mean in dashed red */}
+                    {/* Section Mean (Dashed Red Line) */}
                     {meanPoints.length > 0 && (
-                      <path d={makePathD(meanPoints)} fill="none" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="5,3" />
+                      <>
+                        <path
+                          d={makePathD(meanPoints)}
+                          fill="none"
+                          stroke="#dc2626"
+                          strokeWidth="2"
+                          strokeDasharray="6 3"
+                        />
+                        {meanPoints.map((pt) => (
+                          <circle
+                            key={`mean-pt-${pt.sensor}`}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="3.5"
+                            fill="#dc2626"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
+                      </>
                     )}
 
-                    {/* Representative Station in solid green */}
+                    {/* Representative Station (Solid Green Line + Circles + Values) */}
                     {repPoints.length > 0 && (
-                      <path d={makePathD(repPoints)} fill="none" stroke="#16a34a" strokeWidth="3" />
+                      <>
+                        <path
+                          d={makePathD(repPoints)}
+                          fill="none"
+                          stroke="#16a34a"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        {repPoints.map((pt) => {
+                          const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
+                          return (
+                            <g key={`rep-pt-${pt.sensor}`}>
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r="5"
+                                fill="#16a34a"
+                                stroke="#ffffff"
+                                strokeWidth="2"
+                              />
+                              <text
+                                x={pt.x}
+                                y={labelY}
+                                textAnchor="middle"
+                                fontSize="12"
+                                fontWeight="normal"
+                                fill="#16a34a"
+                                fontFamily="Arial, sans-serif"
+                                shapeRendering="auto"
+                              >
+                                {pt.val.toFixed(2)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </>
                     )}
 
-                    {/* Rep circles */}
-                    {repPoints.map((pt) => (
-                      <circle key={pt.sensor} cx={pt.x} cy={pt.y} r="4.5" fill="#16a34a" stroke="#ffffff" strokeWidth="1.5" />
-                    ))}
+                    {/* 4-sided Inner Box Border */}
+                    <rect
+                      x={pad.left}
+                      y={pad.top}
+                      width={plotW}
+                      height={plotH}
+                      fill="none"
+                      stroke="#000000"
+                      strokeWidth="1.5"
+                    />
 
-                    {/* Mean circles */}
-                    {meanPoints.map((pt) => (
-                      <circle key={pt.sensor} cx={pt.x} cy={pt.y} r="3.5" fill="#dc2626" />
-                    ))}
-
-                    {/* Chart Box */}
-                    <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#0f172a" strokeWidth="1.2" />
-
-                    {/* X Ticks */}
-                    {deflectionCols.map((c, i) => {
-                      const x = pad.left + xGap + (deflectionCols.length > 1 ? (i / (deflectionCols.length - 1)) * availW : availW / 2);
-                      return (
-                        <g key={c}>
-                          <line x1={x} y1={pad.top + plotH} x2={x} y2={pad.top + plotH + 4} stroke="#0f172a" strokeWidth="1" />
-                          <text x={x} y={pad.top + plotH + 16} textAnchor="middle" fontSize="10" fill="#0f172a" fontFamily="Arial, sans-serif">
-                            {c}
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    <text
-                      x={pad.left - 36}
-                      y={pad.top + plotH / 2}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                      transform={`rotate(-90 ${pad.left - 36} ${pad.top + plotH / 2})`}
-                    >
-                      Deflection (mils)
-                    </text>
-
-                    {/* Legend */}
-                    <rect x={pad.left + plotW - 195} y={pad.top + 10} width={185} height={46} fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" rx="4" />
-                    <line x1={pad.left + plotW - 185} y1={pad.top + 24} x2={pad.left + plotW - 160} y2={pad.top + 24} stroke="#dc2626" strokeWidth="2.5" strokeDasharray="4,2" />
-                    <text x={pad.left + plotW - 152} y={pad.top + 27} fontSize="10" fill="#dc2626" fontWeight="bold" fontFamily="Arial, sans-serif">Section Mean (D̄)</text>
-                    <line x1={pad.left + plotW - 185} y1={pad.top + 40} x2={pad.left + plotW - 160} y2={pad.top + 40} stroke="#16a34a" strokeWidth="3" />
-                    <text x={pad.left + plotW - 152} y={pad.top + 43} fontSize="10" fill="#16a34a" fontWeight="bold" fontFamily="Arial, sans-serif">Rep Station {repStationId} (Min RMSE)</text>
+                    {/* Bottom-Right Legend */}
+                    {renderBottomRightLegend([
+                      {
+                        id: "rep",
+                        label: `Representative (STA ${repStationId})`,
+                        type: "solid-green",
+                      },
+                      {
+                        id: "mean",
+                        label: "Section Mean",
+                        type: "dashed-red",
+                      },
+                    ])}
                   </svg>
                 )}
 
@@ -1381,94 +1663,82 @@ export default function RepresentativeSlideGuide({
                     width={chartW}
                     height={chartH}
                     viewBox={`0 0 ${chartW} ${chartH}`}
-                    style={{ display: "block", background: "#ffffff" }}
+                    style={{ width: "100%", maxWidth: chartW, height: "auto", display: "block", background: "#ffffff" }}
+                    shapeRendering="crispEdges"
+                    textRendering="geometricPrecision"
                   >
-                    <text
-                      x={chartW / 2}
-                      y={18}
-                      textAnchor="middle"
-                      fontSize="13"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                    >
-                      Final Representative Basin: Station {repStationId} (Drop {selectedVariant})
-                    </text>
-
-                    {/* Grid lines */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
-                      const y = pad.top + pct * plotH;
-                      const val = (pct * maxDeflection).toFixed(1);
-                      return (
-                        <g key={pct}>
-                          <line x1={pad.left} y1={y} x2={pad.left + plotW} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-                          <text x={pad.left - 6} y={y + 4} textAnchor="end" fontSize="9" fill="#64748b" fontFamily="Arial, sans-serif">
-                            {val}
-                          </text>
-                        </g>
-                      );
-                    })}
+                    {/* Common Gridlines, Inner Ticks, and Axis Titles */}
+                    {renderCommonGridAndAxes(`Representative Deflection Basin: Station ${repStationId} (Drop ${selectedVariant})`)}
 
                     {/* Shaded Area under Curve */}
                     {repPoints.length > 0 && (
                       <path
                         d={`${makePathD(repPoints)} L ${repPoints[repPoints.length - 1].x} ${pad.top} L ${repPoints[0].x} ${pad.top} Z`}
-                        fill="#dcfce7"
-                        fillOpacity="0.5"
+                        fill="#16a34a"
+                        fillOpacity="0.08"
                       />
                     )}
 
                     {/* Representative Curve */}
                     {repPoints.length > 0 && (
-                      <path d={makePathD(repPoints)} fill="none" stroke="#16a34a" strokeWidth="3" />
+                      <path
+                        d={makePathD(repPoints)}
+                        fill="none"
+                        stroke="#16a34a"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     )}
 
                     {/* Points & Deflection values */}
-                    {repPoints.map((pt) => (
-                      <g key={pt.sensor}>
-                        <circle cx={pt.x} cy={pt.y} r="5" fill="#16a34a" stroke="#ffffff" strokeWidth="2" />
-                        <text
-                          x={pt.x}
-                          y={pt.y > pad.top + plotH - 22 ? pt.y - 10 : pt.y + 16}
-                          textAnchor="middle"
-                          fontSize="10"
-                          fontWeight="bold"
-                          fill="#14532d"
-                          fontFamily="Arial, sans-serif"
-                        >
-                          {pt.val.toFixed(2)}
-                        </text>
-                      </g>
-                    ))}
-
-                    {/* Chart Box */}
-                    <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="#0f172a" strokeWidth="1.2" />
-
-                    {/* X Ticks */}
-                    {deflectionCols.map((c, i) => {
-                      const x = pad.left + xGap + (deflectionCols.length > 1 ? (i / (deflectionCols.length - 1)) * availW : availW / 2);
+                    {repPoints.map((pt) => {
+                      const labelY = pt.y > pad.top + plotH - 25 ? pt.y - 10 : pt.y + 18;
                       return (
-                        <g key={c}>
-                          <line x1={x} y1={pad.top + plotH} x2={x} y2={pad.top + plotH + 4} stroke="#0f172a" strokeWidth="1" />
-                          <text x={x} y={pad.top + plotH + 16} textAnchor="middle" fontSize="10" fill="#0f172a" fontFamily="Arial, sans-serif">
-                            {c}
+                        <g key={`rep-pt-${pt.sensor}`}>
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="5"
+                            fill="#16a34a"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                          />
+                          <text
+                            x={pt.x}
+                            y={labelY}
+                            textAnchor="middle"
+                            fontSize="12"
+                            fontWeight="bold"
+                            fill="#14532d"
+                            fontFamily="Arial, sans-serif"
+                            shapeRendering="auto"
+                          >
+                            {pt.val.toFixed(2)}
                           </text>
                         </g>
                       );
                     })}
 
-                    <text
-                      x={pad.left - 36}
-                      y={pad.top + plotH / 2}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fontWeight="bold"
-                      fill="#0f172a"
-                      fontFamily="Arial, sans-serif"
-                      transform={`rotate(-90 ${pad.left - 36} ${pad.top + plotH / 2})`}
-                    >
-                      Deflection (mils)
-                    </text>
+                    {/* 4-sided Inner Box Border */}
+                    <rect
+                      x={pad.left}
+                      y={pad.top}
+                      width={plotW}
+                      height={plotH}
+                      fill="none"
+                      stroke="#000000"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Bottom-Right Legend */}
+                    {renderBottomRightLegend([
+                      {
+                        id: "rep",
+                        label: `Representative (STA ${repStationId})`,
+                        type: "solid-green",
+                      },
+                    ])}
                   </svg>
                 )}
               </div>
