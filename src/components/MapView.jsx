@@ -1875,40 +1875,16 @@ export default function MapView({
                   zIndex: 10,
                 }}
               >
-                {/* Left: Station info + Year Badge */}
+                {/* Left: Station info + Coordinates */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 16 }}>🚶‍♂️</span>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>
                     Station {streetViewStation.StationID ?? streetViewStation.stationId}
                   </span>
-                  {currentImageYear && (
-                    <span
-                      style={{
-                        background: "#0284c7",
-                        color: "#ffffff",
-                        padding: "1px 6px",
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontWeight: 700,
-                      }}
-                      title={`Street View Imagery Year: ${currentImageYear}`}
-                    >
-                      📅 {currentImageYear}
-                    </span>
-                  )}
                   {streetViewStation.dmi != null && (
                     <>
                       <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
                       <span style={{ color: "#9ca3af", fontSize: 11 }}>
                         DMI: {streetViewStation.dmi?.toLocaleString()} ft
-                      </span>
-                    </>
-                  )}
-                  {streetViewStation[activeSensor] != null && (
-                    <>
-                      <span style={{ color: "#9ca3af", fontSize: 11 }}>•</span>
-                      <span style={{ color: "#38bdf8", fontWeight: 600, fontSize: 11 }}>
-                        {activeSensor}: {Number(streetViewStation[activeSensor] ?? streetViewStation.D1 ?? 0).toFixed(2)} mils
                       </span>
                     </>
                   )}
