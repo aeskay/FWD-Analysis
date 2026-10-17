@@ -143,6 +143,7 @@ export default function MapView({
   // Street View 3D road markers state & ref
   const [showPointsInStreetView, setShowPointsInStreetView] = useState(true);
   const [panoReady, setPanoReady] = useState(false);
+  const [panoStatus, setPanoStatus] = useState("OK"); // "OK" | "ZERO_RESULTS"
   const streetMarkersRef = useRef([]);
 
   // Google Maps JS API & Historical Timeline states
@@ -174,7 +175,16 @@ export default function MapView({
     if (panoId) lastFetchedPanoRef.current = panoId;
 
     setIsLoadingDates(true);
-    const request = panoId ? { pano: panoId } : (latLng ? { location: latLng, radius: 100 } : null);
+    const request = panoId
+      ? { pano: panoId }
+      : latLng
+      ? {
+          location: latLng,
+          radius: 150,
+          preference: window.google?.maps?.StreetViewPreference?.NEAREST,
+          source: window.google?.maps?.StreetViewSource?.OUTDOOR,
+        }
+      : null;
     if (!request) {
       setIsLoadingDates(false);
       return;
@@ -186,6 +196,16 @@ export default function MapView({
         if (status === "OK" && data) {
           const activePano = data.location?.pano || panoId || "";
           setCurrentPanoId(activePano);
+          setPanoStatus("OK");
+
+          // Directly sync active pano to the panorama instance so it never stays black!
+          if (panoramaInstance.current && activePano) {
+            const curPano = panoramaInstance.current.getPano();
+            if (curPano !== activePano) {
+              panoramaInstance.current.setPano(activePano);
+            }
+            window.google?.maps?.event?.trigger(panoramaInstance.current, "resize");
+          }
 
           const rawDate = data.imageDate || "";
           setCurrentImageDate(rawDate);
@@ -256,6 +276,24 @@ export default function MapView({
           }
 
           setAvailableDates(parsed);
+        } else if (status === "ZERO_RESULTS" && latLng) {
+          // Retry with wider 300m radius if 150m failed
+          streetViewServiceRef.current.getPanorama(
+            { location: latLng, radius: 300 },
+            (data300, status300) => {
+              if (status300 === "OK" && data300?.location?.pano) {
+                const fallbackPano = data300.location.pano;
+                if (panoramaInstance.current) {
+                  panoramaInstance.current.setPano(fallbackPano);
+                  window.google?.maps?.event?.trigger(panoramaInstance.current, "resize");
+                }
+                setCurrentPanoId(fallbackPano);
+                setPanoStatus("OK");
+              } else {
+                setPanoStatus("ZERO_RESULTS");
+              }
+            }
+          );
         }
       });
     } catch (err) {
@@ -269,6 +307,8 @@ export default function MapView({
     if (!targetPanoId) return;
     if (panoramaInstance.current) {
       panoramaInstance.current.setPano(targetPanoId);
+      setPanoStatus("OK");
+      window.google?.maps?.event?.trigger(panoramaInstance.current, "resize");
     }
     setCurrentPanoId(targetPanoId);
     const match = availableDates.find((d) => d.pano === targetPanoId);
@@ -1087,6 +1127,38 @@ export default function MapView({
       panoramaInstance.current = pano;
       setPanoReady(true);
 
+      pano.addListener("status_changed", () => {
+        const status = pano.getStatus();
+        if (status === "OK") {
+          setPanoStatus("OK");
+        } else if (status === "ZERO_RESULTS") {
+          // Attempt fallback search with 150m radius via StreetViewService
+          const loc = pano.getPosition();
+          const qLat = loc ? loc.lat() : initialLat;
+          const qLng = loc ? loc.lng() : initialLng;
+          if (streetViewServiceRef.current) {
+            streetViewServiceRef.current.getPanorama(
+              {
+                location: { lat: qLat, lng: qLng },
+                radius: 150,
+                preference: window.google.maps.StreetViewPreference.NEAREST,
+                source: window.google.maps.StreetViewSource.OUTDOOR,
+              },
+              (data, sStatus) => {
+                if (sStatus === "OK" && data?.location?.pano) {
+                  pano.setPano(data.location.pano);
+                  setPanoStatus("OK");
+                } else {
+                  setPanoStatus("ZERO_RESULTS");
+                }
+              }
+            );
+          } else {
+            setPanoStatus("ZERO_RESULTS");
+          }
+        }
+      });
+
       pano.addListener("position_changed", () => {
         const pos = pano.getPosition();
         if (pos) {
@@ -1102,11 +1174,24 @@ export default function MapView({
         const pId = pano.getPano();
         if (pId) {
           setCurrentPanoId(pId);
+          setPanoStatus("OK");
           fetchPanoTimeline(pId);
         }
       });
 
       fetchPanoTimeline(null, { lat: initialLat, lng: initialLng });
+
+      // Multiple resize triggers to ensure tiles are rendered after split container layout settles
+      setTimeout(() => {
+        if (panoramaInstance.current && window.google?.maps) {
+          window.google.maps.event.trigger(panoramaInstance.current, "resize");
+        }
+      }, 60);
+      setTimeout(() => {
+        if (panoramaInstance.current && window.google?.maps) {
+          window.google.maps.event.trigger(panoramaInstance.current, "resize");
+        }
+      }, 250);
     } else {
       window.google.maps.event.trigger(panoramaInstance.current, "resize");
       setPanoReady(true);
@@ -1209,13 +1294,52 @@ export default function MapView({
 
   // Sync panorama when active station / point changes
   useEffect(() => {
-    if (panoramaInstance.current && streetViewStation) {
+    if (panoramaInstance.current && streetViewStation && window.google?.maps) {
       const targetIdx = validPoints.findIndex(
         (p) => String(p.StationID ?? p.stationId) === String(streetViewStation.StationID ?? streetViewStation.stationId)
       );
       const heading = getStationHeading(validPoints, targetIdx >= 0 ? targetIdx : 0);
-      panoramaInstance.current.setPosition({ lat: streetViewStation.lat, lng: streetViewStation.lng });
       panoramaInstance.current.setPov({ heading, pitch: 0, zoom: 1 });
+
+      const service = streetViewServiceRef.current || new window.google.maps.StreetViewService();
+      // Search with radius 150m first to guarantee we find the nearest road panorama
+      service.getPanorama(
+        {
+          location: { lat: streetViewStation.lat, lng: streetViewStation.lng },
+          radius: 150,
+          preference: window.google.maps.StreetViewPreference.NEAREST,
+          source: window.google.maps.StreetViewSource.OUTDOOR,
+        },
+        (data, status) => {
+          if (status === "OK" && data?.location?.pano && panoramaInstance.current) {
+            panoramaInstance.current.setPano(data.location.pano);
+            setPanoStatus("OK");
+            window.google.maps.event.trigger(panoramaInstance.current, "resize");
+          } else {
+            // Wider search up to 300m
+            service.getPanorama(
+              {
+                location: { lat: streetViewStation.lat, lng: streetViewStation.lng },
+                radius: 300,
+              },
+              (data300, status300) => {
+                if (status300 === "OK" && data300?.location?.pano && panoramaInstance.current) {
+                  panoramaInstance.current.setPano(data300.location.pano);
+                  setPanoStatus("OK");
+                  window.google.maps.event.trigger(panoramaInstance.current, "resize");
+                } else {
+                  // Fall back to direct setPosition in case custom Street View coverage exists
+                  if (panoramaInstance.current) {
+                    panoramaInstance.current.setPosition({ lat: streetViewStation.lat, lng: streetViewStation.lng });
+                  }
+                  setPanoStatus("ZERO_RESULTS");
+                }
+              }
+            );
+          }
+        }
+      );
+
       fetchPanoTimeline(null, { lat: streetViewStation.lat, lng: streetViewStation.lng });
     }
   }, [streetViewStation, fetchPanoTimeline, validPoints]);
@@ -1227,6 +1351,16 @@ export default function MapView({
     }
     if (panoramaInstance.current && window.google?.maps) {
       window.google.maps.event.trigger(panoramaInstance.current, "resize");
+      setTimeout(() => {
+        if (panoramaInstance.current && window.google?.maps) {
+          window.google.maps.event.trigger(panoramaInstance.current, "resize");
+        }
+      }, 80);
+      setTimeout(() => {
+        if (panoramaInstance.current && window.google?.maps) {
+          window.google.maps.event.trigger(panoramaInstance.current, "resize");
+        }
+      }, 250);
     }
   }, [splitPercent, streetViewActive]);
 
@@ -2051,6 +2185,75 @@ export default function MapView({
                     allow="accelerometer; gyroscope; magnetometer"
                     allowFullScreen
                   />
+                )}
+
+                {/* Fallback card if Google returns ZERO_RESULTS for this station location */}
+                {googleMapsReady && panoStatus === "ZERO_RESULTS" && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      background: "rgba(15, 23, 42, 0.95)",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#ffffff",
+                      padding: 24,
+                      textAlign: "center",
+                      zIndex: 20,
+                    }}
+                  >
+                    <div style={{ fontSize: 36, marginBottom: 10 }}>📷🚫</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+                      No Street View Directly at Station {streetViewStation?.StationID ?? streetViewStation?.stationId}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#9ca3af", maxWidth: 380, marginBottom: 16, lineHeight: 1.5 }}>
+                      Google Street View does not have panoramic imagery within 300 meters of these coordinates ({streetViewStation?.lat?.toFixed(5)}, {streetViewStation?.lng?.toFixed(5)}).
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                      {currentTargetIndex > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            const prevPt = validPoints[currentTargetIndex - 1];
+                            if (prevPt) {
+                              setStreetViewStation(prevPt);
+                              setActiveStationId(prevPt.StationID ?? prevPt.stationId);
+                            }
+                          }}
+                        >
+                          ◀ Station {validPoints[currentTargetIndex - 1]?.StationID ?? currentTargetIndex}
+                        </button>
+                      )}
+                      {currentTargetIndex < validPoints.length - 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            const nextPt = validPoints[currentTargetIndex + 1];
+                            if (nextPt) {
+                              setStreetViewStation(nextPt);
+                              setActiveStationId(nextPt.StationID ?? nextPt.stationId);
+                            }
+                          }}
+                        >
+                          Station {validPoints[currentTargetIndex + 1]?.StationID ?? currentTargetIndex + 2} ▶
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          const heading = getStationHeading(validPoints, currentTargetIndex);
+                          openGoogleStreetView(streetViewStation.lat, streetViewStation.lng, heading);
+                        }}
+                      >
+                        ↗ Open in Google Maps
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {/* Historical Street View Years Timeline Bar directly at the bottom */}
