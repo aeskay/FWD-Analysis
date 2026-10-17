@@ -525,6 +525,7 @@ html, body, #root {
 .data-table .col-force     { color: var(--accent-blue); font-weight: 500; }
 .data-table .col-deflection{ color: var(--accent-teal); }
 .data-table .col-datetime  { color: var(--text-secondary); font-size: 11px; }
+.data-table .col-thickness { color: #b45309; font-weight: 600; }
 
 .table-pagination {
   display: flex; align-items: center; justify-content: space-between;

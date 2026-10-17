@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { exportToExcel } from "../utils/excelExport";
 import ColumnFilter from "./ColumnFilter";
+import ImportThicknessModal from "./ImportThicknessModal";
 
 const PAGE_SIZE = 100;
 
@@ -10,11 +11,17 @@ const COL_CLASS = {
   DropID: "col-dropid",
   Force: "col-force",
   Stress: "col-force",
+  Thickness: "col-thickness",
 };
 const DEFLECTION_RE = /^D\d+$/;
 
 function formatCell(col, val) {
   if (val === null || val === undefined) return "—";
+  if (col === "Thickness") {
+    if (val === "" || Number.isNaN(val)) return "—";
+    const num = Number(val);
+    return Number.isFinite(num) ? `${num.toFixed(2)}″` : "—";
+  }
   if (val instanceof Date) {
     return val.toLocaleString("en-US", {
       month: "2-digit",
@@ -45,10 +52,12 @@ export default function DataTable({
   hiddenColumns = [],
   allHiddenColumns = { data: [], normalized: [] },
   onUpdateHiddenColumns,
+  onSaveImportedThickness,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
+  const [showThicknessModal, setShowThicknessModal] = useState(false);
 
   const visibleColumns = useMemo(() => {
     const hiddenSet = new Set(hiddenColumns);
@@ -154,9 +163,22 @@ export default function DataTable({
             currentTab="data"
           />
         </div>
-        <button className="btn btn-secondary btn-sm" onClick={handleExport}>
-          ⬇ Export to Excel
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          {onSaveImportedThickness && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowThicknessModal(true)}
+              title="Import pavement thickness from Excel or CSV file"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+            >
+              <span>📏</span>
+              <span>Import Thickness</span>
+            </button>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={handleExport}>
+            ⬇ Export to Excel
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -261,6 +283,15 @@ export default function DataTable({
           </button>
         </div>
       </div>
+
+      {showThicknessModal && (
+        <ImportThicknessModal
+          rows={rows}
+          columns={columns}
+          onClose={() => setShowThicknessModal(false)}
+          onApplyThickness={onSaveImportedThickness}
+        />
+      )}
     </div>
   );
 }

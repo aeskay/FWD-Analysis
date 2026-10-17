@@ -9,11 +9,17 @@ const COL_CLASS = {
   DropID: "col-dropid",
   Force: "col-force",
   Stress: "col-force",
+  Thickness: "col-thickness",
 };
 const DEFLECTION_RE = /^D\d+$/;
 
 function formatCell(col, val) {
   if (val === null || val === undefined) return "—";
+  if (col === "Thickness") {
+    if (val === "" || Number.isNaN(val)) return "—";
+    const num = Number(val);
+    return Number.isFinite(num) ? `${num.toFixed(2)}″` : "—";
+  }
   if (val instanceof Date) {
     return val.toLocaleString("en-US", {
       month: "2-digit",

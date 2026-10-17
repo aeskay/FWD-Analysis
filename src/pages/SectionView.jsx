@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
   getSectionData,
+  saveSectionData,
+  updateSectionThickness,
   updateSectionExcludedStations,
   updateSectionHiddenColumns,
   saveUserHiddenColumns,
@@ -172,6 +174,37 @@ export default function SectionView({
     });
   };
 
+  const handleSaveImportedThickness = async (updatedRows, updatedColumns, avgThickness) => {
+    if (!user?.uid || !project?.id || !section?.id) {
+      setTableData((prev) => ({
+        ...prev,
+        rows: updatedRows,
+        columns: updatedColumns,
+      }));
+      if (avgThickness && Number.isFinite(avgThickness) && avgThickness > 0) {
+        setSectionThickness(avgThickness);
+        if (section) section.thickness = avgThickness;
+      }
+      return;
+    }
+
+    await saveSectionData(user.uid, project.id, section.id, updatedRows, updatedColumns);
+
+    if (avgThickness && Number.isFinite(avgThickness) && avgThickness > 0) {
+      await updateSectionThickness(user.uid, project.id, section.id, avgThickness);
+      setSectionThickness(avgThickness);
+      if (section) section.thickness = avgThickness;
+    }
+
+    setTableData((prev) => ({
+      ...prev,
+      rows: updatedRows,
+      columns: updatedColumns,
+    }));
+
+    onSectionUpdated?.();
+  };
+
   // Assign variant letters (A, B, C, ...) to rows based on drop sequence per StationID
   const { taggedRows, availableVariants } = useMemo(() => {
     if (!tableData?.rows?.length) return { taggedRows: [], availableVariants: [] };
@@ -314,6 +347,7 @@ export default function SectionView({
           hiddenColumns={hiddenColumns.data ?? []}
           allHiddenColumns={hiddenColumns}
           onUpdateHiddenColumns={handleUpdateHiddenColumns}
+          onSaveImportedThickness={handleSaveImportedThickness}
           normalizedData={{
             columns: tableData.columns,
             rows: activeNormalizedRows,
