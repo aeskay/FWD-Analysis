@@ -948,25 +948,20 @@ export default function MapView({
       touchPitch: false,
     });
 
-    // Disable default incremental double-click zoom to allow direct zoom into road surface
+    // Disable default incremental double-click zoom
     mapInstance.doubleClickZoom.disable();
 
-    // Natural, responsive scroll wheel zoom so users don't have to scroll dozens of times
-    mapInstance.scrollZoom.setWheelZoomRate(1 / 450);
-    mapInstance.scrollZoom.setZoomRate(1 / 180);
+    // Very gradual, smooth scroll wheel zoom for precise road-to-chart alignment
+    mapInstance.scrollZoom.setWheelZoomRate(1 / 1800);
+    mapInstance.scrollZoom.setZoomRate(1 / 800);
 
-    // Double-click zoom handler: zooms way in to road surface (19.5z)
+    // Gradual double-click zoom (+0.5)
     mapInstance.on("dblclick", (e) => {
-      const currentZ = mapInstance.getZoom();
-      if (currentZ < 18.5) {
-        mapInstance.flyTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: 19.5, duration: 750 });
-      } else {
-        if (bounds) {
-          mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
-        } else {
-          mapInstance.flyTo({ center: [e.lngLat.lng, e.lngLat.lat], zoom: 15, duration: 600 });
-        }
-      }
+      mapInstance.easeTo({
+        center: [e.lngLat.lng, e.lngLat.lat],
+        zoom: Math.min(22, mapInstance.getZoom() + 0.5),
+        duration: 250,
+      });
     });
 
     // Single-click on map: jump Street View to exact clicked road location
@@ -1134,20 +1129,15 @@ export default function MapView({
         }
       });
 
-      // Double-click marker: zooms way in to road surface (19.5z)
+      // Double-click marker: gradual zoom (+0.5) centered on station
       el.addEventListener("dblclick", (e) => {
         e.stopPropagation();
-        const currentZ = mapInstance.getZoom();
-        if (currentZ < 18.5) {
-          mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 19.5, duration: 750 });
-          setActiveStationId(pt.StationID ?? pt.stationId);
-        } else {
-          if (bounds) {
-            mapInstance.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
-          } else {
-            mapInstance.flyTo({ center: [pt.lng, pt.lat], zoom: 15, duration: 600 });
-          }
-        }
+        mapInstance.easeTo({
+          center: [pt.lng, pt.lat],
+          zoom: Math.min(22, mapInstance.getZoom() + 0.5),
+          duration: 250,
+        });
+        setActiveStationId(pt.StationID ?? pt.stationId);
       });
 
       // Build interactive popup with Street View & Zoom buttons
@@ -1619,15 +1609,28 @@ export default function MapView({
     }
   };
 
-  // Fine zoom controls for pixel-precise road-to-chart alignment
-  const handleZoomInFine = () => {
+  const handleSetExactZoom = (z) => {
     if (!map.current) return;
-    map.current.easeTo({ zoom: map.current.getZoom() + 0.15, duration: 150 });
+    const num = parseFloat(z);
+    if (!isNaN(num) && num >= 1 && num <= 22) {
+      setCurrentZoom(Number(num.toFixed(1)));
+      map.current.easeTo({ zoom: num, duration: 250 });
+    }
   };
 
-  const handleZoomOutFine = () => {
+  // Gradual zoom controls (0.5 increments for precise alignment)
+  const handleZoomInGradual = () => {
     if (!map.current) return;
-    map.current.easeTo({ zoom: map.current.getZoom() - 0.15, duration: 150 });
+    const currentZ = map.current.getZoom();
+    const nextZ = Math.min(22, Number((currentZ + 0.5).toFixed(1)));
+    map.current.easeTo({ zoom: nextZ, duration: 200 });
+  };
+
+  const handleZoomOutGradual = () => {
+    if (!map.current) return;
+    const currentZ = map.current.getZoom();
+    const nextZ = Math.max(1, Number((currentZ - 0.5).toFixed(1)));
+    map.current.easeTo({ zoom: nextZ, duration: 200 });
   };
 
   // SVG Export Canvas helper (high-resolution 2x PNG)
@@ -1862,18 +1865,15 @@ export default function MapView({
     }
   };
 
-  // Double-clicking chart point zooms way in to road surface on map
+  // Double-clicking chart point zooms in gradually (+0.5) centered on point
   const handleChartDoubleClick = () => {
     if (activeHoverPoint && map.current) {
-      const currentZ = map.current.getZoom();
-      if (currentZ < 18.5) {
-        map.current.flyTo({ center: [activeHoverPoint.lng, activeHoverPoint.lat], zoom: 19.5, duration: 750 });
-        setActiveStationId(activeHoverPoint.stationId);
-      } else {
-        if (bounds) {
-          map.current.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 600 });
-        }
-      }
+      map.current.easeTo({
+        center: [activeHoverPoint.lng, activeHoverPoint.lat],
+        zoom: Math.min(22, map.current.getZoom() + 0.5),
+        duration: 250,
+      });
+      setActiveStationId(activeHoverPoint.stationId);
     }
   };
 
@@ -2171,35 +2171,64 @@ export default function MapView({
 
         {/* Right: Fine Zoom + Rotation + Map Type toggles */}
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          {/* Fine Zoom Controls for Road-to-Chart Alignment */}
-          <div className="rotation-control-group" title="Fine Zoom adjustment for chart alignment">
+          {/* Gradual Zoom Controls for Road-to-Chart Alignment */}
+          <div className="rotation-control-group" title="Gradual Zoom (steps by 0.5 or click to type exact zoom)">
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={handleZoomOutFine}
-              title="Zoom Out (Fine: -0.15)"
+              onClick={handleZoomOutGradual}
+              title="Zoom Out (-0.5)"
               style={{ padding: "2px 8px", fontWeight: "bold", fontSize: 13, lineHeight: 1 }}
             >
               −
             </button>
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: "var(--text-secondary)",
-                minWidth: 36,
-                textAlign: "center",
-                userSelect: "none",
-              }}
-              title="Current Zoom Level"
-            >
-              {currentZoom.toFixed(1)}z
-            </span>
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+              <input
+                type="number"
+                step="0.1"
+                min="1"
+                max="22"
+                value={currentZoom}
+                onChange={(e) => handleSetExactZoom(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.target.blur();
+                  }
+                }}
+                title="Click to type exact zoom level (e.g. 16.5)"
+                style={{
+                  width: 44,
+                  padding: "2px 2px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textAlign: "center",
+                  border: "1px solid transparent",
+                  borderRadius: 3,
+                  background: "transparent",
+                  outline: "none",
+                  cursor: "text",
+                  color: "var(--text-primary)",
+                  fontFamily: "inherit",
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = "var(--border-default)";
+                  e.target.style.background = "#ffffff";
+                  e.target.select();
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = "transparent";
+                  e.target.style.background = "transparent";
+                }}
+              />
+              <span style={{ fontSize: 11, fontWeight: 600, pointerEvents: "none", marginLeft: -4, marginRight: 2, color: "var(--text-secondary)" }}>
+                z
+              </span>
+            </div>
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={handleZoomInFine}
-              title="Zoom In (Fine: +0.15)"
+              onClick={handleZoomInGradual}
+              title="Zoom In (+0.5)"
               style={{ padding: "2px 8px", fontWeight: "bold", fontSize: 13, lineHeight: 1 }}
             >
               +
