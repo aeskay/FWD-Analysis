@@ -254,7 +254,15 @@ export default function RepresentativeSlideGuide({
         {
           title: "Pavement Layer Modulus Backcalculation Problem",
           code: "\\min_{E_1, E_2, \\dots, E_k} \\sum_{j=1}^{N} w_j \\left[ D_j^{\\text{measured}} - D_j^{\\text{theoretical}}(E_1, \\dots, E_k) \\right]^2",
-          explanation: "Backcalculation matches measured physical deflections to theoretical MLET responses.",
+          explanation: "Backcalculation solver matches measured physical deflections to theoretical MLET layer responses.",
+          where: [
+            { symbol: "D_j^{measured}", definition: "Measured surface deflection at geophone sensor j (D₁ to D₇, mils)" },
+            { symbol: "D_j^{theoretical}", definition: "Theoretical surface deflection calculated by Multi-Layer Elastic Theory (MLET) at sensor offset j" },
+            { symbol: "E_k", definition: "Elastic modulus of pavement layer k (E₁ = E_AC, E₂ = E_Base, E₃ = E_Subgrade in psi or ksi)" },
+            { symbol: "w_j", definition: "Weighting factor assigned to geophone sensor j (standardly 1.0)" },
+            { symbol: "N", definition: "Total number of deflection geophones on the FWD trailer (N = 7: D₁ through D₇)" },
+            { symbol: "j", definition: "Sensor offset index (j = 1, 2, ..., N)" },
+          ],
         },
       ],
       speakerNotes:
@@ -282,11 +290,26 @@ export default function RepresentativeSlideGuide({
           title: "1. Force Normalization to Standard 9-kip Target Load",
           code: "D_{i,j}^{\\text{norm}} = D_{i,j} \\times \\left( \\frac{F_{\\text{target}}}{F_i} \\right) = D_{i,j} \\times \\left( \\frac{9000\\text{ lbs}}{F_i} \\right)",
           explanation: "Normalizes each raw deflection D_ij for station i and sensor j to 9,000 lbs reference force.",
+          where: [
+            { symbol: "D_{i,j}^{norm}", definition: "Force-normalized deflection for station i at sensor j (mils)" },
+            { symbol: "D_{i,j}", definition: "Raw peak deflection measured by sensor j at station i (mils)" },
+            { symbol: "F_i", definition: "Actual peak impact load recorded by the load cell at station i during testing (lbs)" },
+            { symbol: "F_target", definition: "Standard target load (9,000 lbs / 40 kN, representing an 18-kip ESAL single axle wheel load)" },
+            { symbol: "i", definition: `Station index (i = 1, 2, ..., M; total M = ${stationCount} stations tested in this section)` },
+            { symbol: "j", definition: "Geophone sensor index (j = 1, 2, ..., 7)" },
+          ],
         },
         {
           title: "2. Section Mean Deflection Vector & Coefficient of Variation",
-          code: "\\bar{D}_j = \\frac{1}{M} \\sum_{i=1}^{M} D_{i,j}^{\\text{norm}}, \\quad s_j = \\sqrt{\\frac{1}{M-1}\\sum_{i=1}^{M} (D_{i,j} - \\bar{D}_j)^2}, \\quad \\text{CV}_j = \\left( \\frac{s_j}{\\bar{D}_j} \\right) \\times 100\\%",
+          code: "\\bar{D}_j = \\frac{1}{M} \\sum_{i=1}^{M} D_{i,j}^{\\text{norm}}, \\quad s_j = \\sqrt{\\frac{1}{M-1}\\sum_{i=1}^{M} (D_{i,j}^{\\text{norm}} - \\bar{D}_j)^2}, \\quad \\text{CV}_j = \\left( \\frac{s_j}{\\bar{D}_j} \\right) \\times 100\\%",
           explanation: "Computes the baseline central tendency and dispersion for each sensor across the section.",
+          where: [
+            { symbol: "\\bar{D}_j", definition: "Section baseline mean deflection for sensor j across all valid stations (mils)" },
+            { symbol: "M", definition: `Total number of valid FWD testing stations in the project section (M = ${stationCount})` },
+            { symbol: "s_j", definition: "Sample standard deviation of deflections at sensor j along the project section (mils)" },
+            { symbol: "CV_j", definition: "Coefficient of Variation for sensor j (%), quantifying spatial variability across the pavement" },
+            { symbol: "\\mathbf{\\bar{D}}", definition: "7-sensor benchmark vector [D̄₁, D̄₂, ..., D̄₇] representing the mathematical section average" },
+          ],
         },
       ],
       speakerNotes:
@@ -314,11 +337,24 @@ export default function RepresentativeSlideGuide({
           title: "Root Mean Square Error (RMSE) Distance Metric",
           code: "\\text{RMSE}_i = \\sqrt{ \\frac{1}{N} \\sum_{j=1}^{N} \\left( D_{i,j}^{\\text{norm}} - \\bar{D}_j \\right)^2 }",
           explanation: "Quantifies the total geometric deviation between station i's bowl and the section mean vector.",
+          where: [
+            { symbol: "RMSE_i", definition: "Root Mean Square Error of station i (mils), measuring its geometric distance from the section mean bowl" },
+            { symbol: "N", definition: "Total number of geophone sensors across the bowl (N = 7: D₁ to D₇)" },
+            { symbol: "D_{i,j}^{norm}", definition: "Normalized deflection of candidate station i at sensor j (mils)" },
+            { symbol: "\\bar{D}_j", definition: "Section mean benchmark deflection at sensor j (mils)" },
+            { symbol: "j", definition: "Sensor index (j = 1, 2, ..., N)" },
+          ],
         },
         {
           title: "Representative Station Selection Criterion",
           code: "\\text{Station}_{\\text{rep}} = \\arg\\min_{i \\in \\{1, \\dots, M\\}} \\left( \\text{RMSE}_i \\right)",
           explanation: "The physical station that achieves the global minimum Euclidean distance to the section mean.",
+          where: [
+            { symbol: "Station_{rep}", definition: `The chosen representative station (Station ${repStationId})` },
+            { symbol: "\\arg\\min", definition: "Argument of the minimum: mathematical operator that selects the station index i yielding the smallest RMSE" },
+            { symbol: "M", definition: `Total number of candidate stations evaluated in this section (M = ${stationCount})` },
+            { symbol: "RMSE_{min}", definition: `Minimum RMSE achieved across the section (${repRmse} mils)` },
+          ],
         },
       ],
       speakerNotes:
@@ -349,6 +385,14 @@ export default function RepresentativeSlideGuide({
           title: "Standard Pavement Structural Bowl Indices",
           code: "\\begin{aligned} \\text{SCI} &= D_1 - D_2 \\quad &\\text{(Surface / AC Layer)} \\\\ \\text{BDI} &= D_2 - D_3 \\quad &\\text{(Base Layer Condition)} \\\\ \\text{BCI} &= D_3 - D_4 \\quad &\\text{(Subgrade Response)} \\\\ \\text{AREA} &= 6 \\times \\left[ 1 + 2\\left(\\frac{D_2}{D_1}\\right) + 2\\left(\\frac{D_3}{D_1}\\right) + \\left(\\frac{D_4}{D_1}\\right) \\right] \\quad &\\text{(AASHTO Stiffness)} \\end{aligned}",
           explanation: "Standard industry metrics (AASHTO / TxDOT) isolating structural health at specific pavement depths.",
+          where: [
+            { symbol: "D_1", definition: "Peak deflection at center of the 11.8-inch loading plate (offset r = 0 in)" },
+            { symbol: "D_2, D_3, D_4", definition: "Deflections measured at standard radial sensor offsets (typically 8 in, 12 in, and 18 in)" },
+            { symbol: "SCI", definition: "Surface Curvature Index (D₁ - D₂): Reflects asphalt concrete (AC) layer stiffness and top shear strains" },
+            { symbol: "BDI", definition: "Base Damage Index (D₂ - D₃): Reflects structural shear resistance and integrity of the base course layer" },
+            { symbol: "BCI", definition: "Base Curvature Index (D₃ - D₄): Reflects resilient response and load-bearing condition of the deep subgrade" },
+            { symbol: "AREA", definition: "AASHTO Deflection Bowl Area (inches): Composite structural rigidity indicator representing overall slab/beam action" },
+          ],
         },
       ],
       speakerNotes:
@@ -379,6 +423,11 @@ export default function RepresentativeSlideGuide({
           title: "Summary Output Vector for Backcalculation",
           code: "\\mathbf{D}_{\\text{rep}} = \\left[ " + deflectionCols.map((c) => parseFloat(rep?.row?.[c] || 0).toFixed(2)).join(",\\; ") + " \\right]^T \\quad \\text{at } F = 9000\\text{ lbs}",
           explanation: "The physical deflection vector inputted into layer backcalculation algorithms.",
+          where: [
+            { symbol: "\\mathbf{D}_{rep}", definition: `7-sensor physical deflection vector of Station ${repStationId} (mils)` },
+            { symbol: "D_1 \\dots D_7", definition: `Actual measured deflections at radial offsets: ${deflectionCols.map((c) => `${c}=${parseFloat(rep?.row?.[c] || 0).toFixed(2)} mils`).join(", ")}` },
+            { symbol: "F_{target}", definition: "Normalized reference impact force (9,000 lbs load)" },
+          ],
         },
       ],
       speakerNotes:
@@ -401,7 +450,14 @@ export default function RepresentativeSlideGuide({
     });
     out += `\n### Mathematical Equations:\n`;
     slide.latex.forEach((lx) => {
-      out += `**${lx.title}**\n\`\`\`latex\n${lx.code}\n\`\`\`\n*${lx.explanation}*\n\n`;
+      out += `**${lx.title}**\n\`\`\`latex\n${lx.code}\n\`\`\`\n*${lx.explanation}*\n`;
+      if (lx.where && lx.where.length > 0) {
+        out += `\n**Where (Parameter Definitions):**\n`;
+        lx.where.forEach((p) => {
+          out += `• ${p.symbol}: ${p.definition}\n`;
+        });
+      }
+      out += `\n`;
     });
     out += `### Recommended Chart to Include:\n${slide.chartCaption}\n\n`;
     out += `### Speaker Notes:\n${slide.speakerNotes}\n`;
@@ -1006,6 +1062,50 @@ export default function RepresentativeSlideGuide({
                     <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, fontStyle: "italic" }}>
                       {lx.explanation}
                     </div>
+
+                    {/* Parameter Definitions ("Where:") */}
+                    {lx.where && lx.where.length > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed #cbd5e1" }}>
+                        <div
+                          style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            color: "#475569",
+                            marginBottom: 6,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.04em",
+                          }}
+                        >
+                          Where (Parameter Definitions):
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          {lx.where.map((param, pIdx) => (
+                            <div key={pIdx} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, lineHeight: 1.4 }}>
+                              <code
+                                style={{
+                                  background: "#e2e8f0",
+                                  color: "#0f172a",
+                                  padding: "1px 6px",
+                                  borderRadius: 4,
+                                  fontFamily: "JetBrains Mono, Courier New, monospace",
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {param.symbol
+                                  .replace(/\\text\{([^}]+)\}/g, "$1")
+                                  .replace(/\\mathbf\{([^}]+)\}/g, "$1")
+                                  .replace(/\\bar\{([^}]+)\}/g, "$1̄")
+                                  .replace(/\\arg\\min/g, "argmin")
+                                  .replace(/\\/g, "")}
+                              </code>
+                              <span style={{ color: "#334155" }}>{param.definition}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
