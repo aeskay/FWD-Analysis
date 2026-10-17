@@ -1006,12 +1006,12 @@ export default function BowlView({
                             strokeWidth="1"
                           />
                           <line
-                            x1={pad.left - 4}
+                            x1={pad.left}
                             y1={y}
-                            x2={pad.left}
+                            x2={pad.left + 6}
                             y2={y}
                             stroke="#000000"
-                            strokeWidth="1"
+                            strokeWidth="1.5"
                           />
                           <text
                             x={pad.left - 8}
