@@ -8,6 +8,7 @@ import React, { useState, useRef, useMemo } from "react";
 import {
   readThicknessSpreadsheet,
   detectThicknessColumn,
+  detectDmiColumn,
   detectStationColumn,
   getUniqueSectionStations,
   matchThicknessToStations,
@@ -31,9 +32,10 @@ export default function ImportThicknessModal({
   const [dragOver, setDragOver] = useState(false);
   const [fileData, setFileData] = useState(null); // { fileName, columns, rows, rowCount }
   const [selectedThicknessCol, setSelectedThicknessCol] = useState("");
+  const [selectedDmiCol, setSelectedDmiCol] = useState("");
   const [selectedStationCol, setSelectedStationCol] = useState("");
-  const [matchingMethod, setMatchingMethod] = useState("order"); // "order" | "station"
-  const [previewFilter, setPreviewFilter] = useState("all"); // "all" | "measured" | "empty" | "missing_row"
+  const [matchingMethod, setMatchingMethod] = useState("dmi"); // "dmi" | "order" | "station"
+  const [previewFilter, setPreviewFilter] = useState("all"); // "all" | "measured" | "empty" | "missing"
   const [showExtraRowsDrawer, setShowExtraRowsDrawer] = useState(false);
   const [acknowledgedMismatch, setAcknowledgedMismatch] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
@@ -63,6 +65,7 @@ export default function ImportThicknessModal({
       const parsed = readThicknessSpreadsheet(buffer);
 
       const detectedThick = detectThicknessColumn(parsed.columns);
+      const detectedDmi = detectDmiColumn(parsed.columns);
       const detectedStn = detectStationColumn(parsed.columns);
 
       setFileData({
@@ -73,8 +76,15 @@ export default function ImportThicknessModal({
       });
 
       setSelectedThicknessCol(detectedThick);
+      setSelectedDmiCol(detectedDmi);
       setSelectedStationCol(detectedStn);
-      setMatchingMethod("order"); // default to corresponding order
+
+      // Prefer DMI matching if a DMI column is present; fallback to order
+      if (detectedDmi) {
+        setMatchingMethod("dmi");
+      } else {
+        setMatchingMethod("order");
+      }
     } catch (err) {
       console.error("Failed to parse thickness spreadsheet:", err);
       setError(err.message || "Failed to read the file. Please check the file format.");
@@ -101,7 +111,8 @@ export default function ImportThicknessModal({
       fileData.rows,
       selectedThicknessCol,
       selectedStationCol,
-      matchingMethod
+      matchingMethod,
+      selectedDmiCol
     );
   }, [
     uniqueStations,
@@ -109,6 +120,7 @@ export default function ImportThicknessModal({
     selectedThicknessCol,
     selectedStationCol,
     matchingMethod,
+    selectedDmiCol,
   ]);
 
   const stats = useMemo(() => {
@@ -124,6 +136,7 @@ export default function ImportThicknessModal({
       matchingMethod,
       matchedList,
       stationCol: selectedStationCol,
+      dmiCol: selectedDmiCol,
     });
   }, [
     fileData,
@@ -132,6 +145,7 @@ export default function ImportThicknessModal({
     matchingMethod,
     matchedList,
     selectedStationCol,
+    selectedDmiCol,
   ]);
 
   // Extra unapplied rows if file has more rows than section stations
@@ -139,6 +153,11 @@ export default function ImportThicknessModal({
     if (!fileData || !selectedThicknessCol || matchingMethod !== "order") return [];
     return getExtraFileRows(fileData.rows, uniqueStations.length, selectedThicknessCol);
   }, [fileData, selectedThicknessCol, matchingMethod, uniqueStations.length]);
+
+  // Missing stations count
+  const missingCount = useMemo(() => {
+    return matchedList.filter((m) => m.isMissingInFile || !m.hasFileRow).length;
+  }, [matchedList]);
 
   // Filtered preview stations
   const filteredPreviewList = useMemo(() => {
@@ -149,8 +168,8 @@ export default function ImportThicknessModal({
     if (previewFilter === "empty") {
       return matchedList.filter((m) => m.thickness === null);
     }
-    if (previewFilter === "missing_row") {
-      return matchedList.filter((m) => !m.hasFileRow);
+    if (previewFilter === "missing" || previewFilter === "missing_row") {
+      return matchedList.filter((m) => m.isMissingInFile || !m.hasFileRow);
     }
     return matchedList;
   }, [matchedList, previewFilter]);
@@ -405,7 +424,74 @@ export default function ImportThicknessModal({
                   >
                     Matching Method
                   </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {/* Option 1: Match by DMI / Distance */}
+                    <div>
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 12,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="matchingMethod"
+                          value="dmi"
+                          checked={matchingMethod === "dmi"}
+                          onChange={() => {
+                            setMatchingMethod("dmi");
+                            setAcknowledgedMismatch(false);
+                          }}
+                          style={{ accentColor: "#2563eb" }}
+                        />
+                        <span style={{ fontWeight: matchingMethod === "dmi" ? 700 : 400, color: matchingMethod === "dmi" ? "#1d4ed8" : "inherit" }}>
+                          Match by DMI (Distance) <span style={{ fontSize: 10, background: "#dbeafe", color: "#1e40af", padding: "1px 6px", borderRadius: 10, fontWeight: 600 }}>Recommended</span>
+                        </span>
+                      </label>
+
+                      {matchingMethod === "dmi" && (
+                        <div style={{ marginLeft: 22, marginTop: 6 }}>
+                          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#4b5563", marginBottom: 3 }}>
+                            DMI / Distance Column in File: <span style={{ color: "#dc2626" }}>*</span>
+                          </label>
+                          <select
+                            className="select-input"
+                            value={selectedDmiCol}
+                            onChange={(e) => {
+                              setSelectedDmiCol(e.target.value);
+                              setAcknowledgedMismatch(false);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "4px 8px",
+                              fontSize: 12,
+                              borderRadius: "var(--r-sm)",
+                              border: "1px solid var(--border-default)",
+                              background: "#ffffff",
+                            }}
+                          >
+                            <option value="" disabled>
+                              -- Select DMI / Distance Column --
+                            </option>
+                            {fileData.columns
+                              .filter((c) => c !== selectedThicknessCol)
+                              .map((col) => (
+                                <option key={col} value={col}>
+                                  {col}
+                                </option>
+                              ))}
+                          </select>
+                          <p style={{ fontSize: 10, color: "#6b7280", margin: "3px 0 0" }}>
+                            Matches each station by its physical distance. Missing DMIs are safely identified and highlighted in RED.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Option 2: Sequential Order */}
                     <label
                       style={{
                         display: "flex",
@@ -431,65 +517,71 @@ export default function ImportThicknessModal({
                       </span>
                     </label>
 
+                    {/* Option 3: Match by Station ID */}
                     {fileData.columns.length > 1 && (
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          fontSize: 12,
-                          cursor: "pointer",
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="matchingMethod"
-                          value="station"
-                          checked={matchingMethod === "station"}
-                          onChange={() => {
-                            setMatchingMethod("station");
-                            setAcknowledgedMismatch(false);
+                      <div>
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 12,
+                            cursor: "pointer",
                           }}
-                          style={{ accentColor: "#2563eb" }}
-                        />
-                        <span style={{ fontWeight: matchingMethod === "station" ? 600 : 400 }}>
-                          Match by Station Column ID
-                        </span>
-                      </label>
+                        >
+                          <input
+                            type="radio"
+                            name="matchingMethod"
+                            value="station"
+                            checked={matchingMethod === "station"}
+                            onChange={() => {
+                              setMatchingMethod("station");
+                              setAcknowledgedMismatch(false);
+                            }}
+                            style={{ accentColor: "#2563eb" }}
+                          />
+                          <span style={{ fontWeight: matchingMethod === "station" ? 600 : 400 }}>
+                            Match by Station Column ID
+                          </span>
+                        </label>
+
+                        {matchingMethod === "station" && (
+                          <div style={{ marginLeft: 22, marginTop: 6 }}>
+                            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#4b5563", marginBottom: 3 }}>
+                              Station Column in File:
+                            </label>
+                            <select
+                              className="select-input"
+                              value={selectedStationCol}
+                              onChange={(e) => {
+                                setSelectedStationCol(e.target.value);
+                                setAcknowledgedMismatch(false);
+                              }}
+                              style={{
+                                width: "100%",
+                                padding: "4px 8px",
+                                fontSize: 12,
+                                borderRadius: "var(--r-sm)",
+                                border: "1px solid var(--border-default)",
+                                background: "#ffffff",
+                              }}
+                            >
+                              <option value="" disabled>
+                                -- Select Station Column --
+                              </option>
+                              {fileData.columns
+                                .filter((c) => c !== selectedThicknessCol)
+                                .map((col) => (
+                                  <option key={col} value={col}>
+                                    {col}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-
-                  {matchingMethod === "station" && (
-                    <div style={{ marginTop: 8 }}>
-                      <select
-                        className="select-input"
-                        value={selectedStationCol}
-                        onChange={(e) => {
-                          setSelectedStationCol(e.target.value);
-                          setAcknowledgedMismatch(false);
-                        }}
-                        style={{
-                          width: "100%",
-                          padding: "4px 8px",
-                          fontSize: 12,
-                          borderRadius: "var(--r-sm)",
-                          border: "1px solid var(--border-default)",
-                          background: "#ffffff",
-                        }}
-                      >
-                        <option value="" disabled>
-                          -- Select Station Column --
-                        </option>
-                        {fileData.columns
-                          .filter((c) => c !== selectedThicknessCol)
-                          .map((col) => (
-                            <option key={col} value={col}>
-                              {col}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -763,14 +855,22 @@ export default function ImportThicknessModal({
                         Empty ({stats.emptyCount})
                       </button>
                     )}
-                    {mismatch?.type === "fewer_rows" && (
+                    {missingCount > 0 && (
                       <button
                         type="button"
-                        className={`btn btn-xs ${previewFilter === "missing_row" ? "btn-dark" : "btn-secondary"}`}
-                        onClick={() => setPreviewFilter("missing_row")}
-                        style={{ fontSize: 11, padding: "2px 8px", color: previewFilter === "missing_row" ? undefined : "#dc2626" }}
+                        className={`btn btn-xs ${previewFilter === "missing" ? "btn-dark" : "btn-secondary"}`}
+                        onClick={() => setPreviewFilter(previewFilter === "missing" ? "all" : "missing")}
+                        style={{
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          color: previewFilter === "missing" ? "#ffffff" : "#dc2626",
+                          background: previewFilter === "missing" ? "#dc2626" : "#fef2f2",
+                          border: "1px solid #fca5a5",
+                          fontWeight: 700,
+                        }}
+                        title="View stations with missing DMI or no row in file"
                       >
-                        ⚠️ No File Row ({mismatch.missingCount})
+                        ❌ Missing in File ({missingCount})
                       </button>
                     )}
                   </div>
@@ -833,39 +933,56 @@ export default function ImportThicknessModal({
                       ) : (
                         filteredPreviewList.map((item, idx) => {
                           const isEven = idx % 2 === 0;
+                          const isMissing = item.isMissingInFile || !item.hasFileRow;
                           return (
                             <tr
                               key={item.stationId}
                               style={{
-                                background: !item.hasFileRow
-                                  ? "#fffbeb"
+                                background: isMissing
+                                  ? "#fef2f2"
                                   : isEven
                                   ? "#ffffff"
                                   : "#f9fafb",
-                                borderBottom: "1px solid #f3f4f6",
+                                borderBottom: isMissing ? "1px solid #fecaca" : "1px solid #f3f4f6",
                               }}
                             >
-                              <td style={{ padding: "6px 10px", fontWeight: 600 }}>
+                              <td style={{ padding: "6px 10px", fontWeight: 600, color: isMissing ? "#991b1b" : "inherit" }}>
                                 Station {item.stationId}
+                                {isMissing && (
+                                  <span
+                                    style={{
+                                      marginLeft: 6,
+                                      fontSize: 10,
+                                      color: "#b91c1c",
+                                      background: "#fee2e2",
+                                      border: "1px solid #fca5a5",
+                                      padding: "1px 5px",
+                                      borderRadius: 3,
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    MISSING
+                                  </span>
+                                )}
                               </td>
-                              <td style={{ padding: "6px 10px", color: "#6b7280" }}>
+                              <td style={{ padding: "6px 10px", fontWeight: isMissing ? 700 : 400, color: isMissing ? "#b91c1c" : "#6b7280" }}>
                                 {item.dmi != null ? `${item.dmi.toLocaleString()} ft` : "—"}
                               </td>
-                              <td style={{ padding: "6px 10px", color: "#6b7280" }}>
-                                {item.fileRowNumber != null ? `#${item.fileRowNumber}` : "—"}
+                              <td style={{ padding: "6px 10px", color: isMissing ? "#dc2626" : "#6b7280" }}>
+                                {item.fileRowNumber != null ? `#${item.fileRowNumber}` : "None"}
                               </td>
                               <td
                                 style={{
                                   padding: "6px 10px",
                                   fontFamily: "monospace",
-                                  color: "#4b5563",
+                                  color: isMissing ? "#dc2626" : "#4b5563",
                                 }}
                               >
                                 {item.rawFileValue != null && String(item.rawFileValue).trim() !== "" ? (
                                   String(item.rawFileValue)
-                                ) : !item.hasFileRow ? (
-                                  <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
-                                    None (end of file)
+                                ) : isMissing ? (
+                                  <span style={{ color: "#dc2626", fontWeight: 600, fontSize: 11 }}>
+                                    Missing in file
                                   </span>
                                 ) : (
                                   "—"
@@ -876,6 +993,10 @@ export default function ImportThicknessModal({
                                   <strong style={{ color: "#1e3a8a" }}>
                                     {item.thickness.toFixed(2)}″
                                   </strong>
+                                ) : isMissing ? (
+                                  <span style={{ color: "#dc2626", fontStyle: "italic", fontWeight: 600, fontSize: 11 }}>
+                                    — Empty (Missing DMI)
+                                  </span>
                                 ) : (
                                   <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
                                     — Empty
@@ -883,7 +1004,7 @@ export default function ImportThicknessModal({
                                 )}
                               </td>
                               <td style={{ padding: "6px 10px" }}>
-                                {item.hasFileRow ? (
+                                {!isMissing ? (
                                   item.thickness != null ? (
                                     <span
                                       style={{
@@ -919,14 +1040,14 @@ export default function ImportThicknessModal({
                                       display: "inline-block",
                                       fontSize: 10,
                                       fontWeight: 700,
-                                      color: "#92400e",
-                                      background: "#fef3c7",
-                                      border: "1px solid #fde68a",
+                                      color: "#991b1b",
+                                      background: "#fee2e2",
+                                      border: "1px solid #fca5a5",
                                       padding: "1px 6px",
                                       borderRadius: 4,
                                     }}
                                   >
-                                    ⚠️ No File Row
+                                    ❌ Missing DMI in File
                                   </span>
                                 )}
                               </td>
@@ -963,22 +1084,29 @@ export default function ImportThicknessModal({
                   gap: 8,
                   fontSize: 12,
                   cursor: "pointer",
-                  color: "#92400e",
+                  color: matchingMethod === "dmi" || mismatch.missingCount > 0 ? "#991b1b" : "#92400e",
                   fontWeight: 600,
-                  background: "#fffbeb",
-                  padding: "4px 10px",
+                  background: matchingMethod === "dmi" || mismatch.missingCount > 0 ? "#fef2f2" : "#fffbeb",
+                  padding: "6px 12px",
                   borderRadius: 6,
-                  border: "1px solid #fde68a",
+                  border: `1px solid ${matchingMethod === "dmi" || mismatch.missingCount > 0 ? "#fecaca" : "#fde68a"}`,
                 }}
               >
                 <input
                   type="checkbox"
                   checked={acknowledgedMismatch}
                   onChange={(e) => setAcknowledgedMismatch(e.target.checked)}
-                  style={{ accentColor: "#d97706", width: 15, height: 15, cursor: "pointer" }}
+                  style={{
+                    accentColor: matchingMethod === "dmi" || mismatch.missingCount > 0 ? "#dc2626" : "#d97706",
+                    width: 16,
+                    height: 16,
+                    cursor: "pointer",
+                  }}
                 />
                 <span>
-                  I acknowledge row mismatch ({mismatch.missingCount > 0 ? `${mismatch.missingCount} stations remain empty` : `${mismatch.extraCount} rows skipped`})
+                  {matchingMethod === "dmi"
+                    ? `I acknowledge ${mismatch.missingCount} missing station${mismatch.missingCount === 1 ? "" : "s"} (highlighted in RED) will remain empty without thickness`
+                    : `I acknowledge row mismatch (${mismatch.missingCount > 0 ? `${mismatch.missingCount} stations remain empty` : `${mismatch.extraCount} rows skipped`})`}
                 </span>
               </label>
             )}
@@ -1000,6 +1128,8 @@ export default function ImportThicknessModal({
               disabled={
                 !fileData ||
                 !selectedThicknessCol ||
+                (matchingMethod === "dmi" && !selectedDmiCol) ||
+                (matchingMethod === "station" && !selectedStationCol) ||
                 isApplying ||
                 matchedList.length === 0 ||
                 (mismatch?.hasMismatch && !acknowledgedMismatch)
@@ -1020,7 +1150,7 @@ export default function ImportThicknessModal({
               }}
               title={
                 mismatch?.hasMismatch && !acknowledgedMismatch
-                  ? "Please check the box to acknowledge the row count mismatch before applying"
+                  ? "Please check the box to acknowledge missing stations before applying"
                   : undefined
               }
             >

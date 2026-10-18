@@ -61,9 +61,20 @@ export function readThicknessSpreadsheet(buffer) {
 
 /**
  * Auto-detects the column most likely to contain Thickness data.
+ * Prioritizes thickness in inches if both mm and inches exist.
  */
 export function detectThicknessColumn(columns) {
   if (!columns || columns.length === 0) return "";
+
+  // Priority 1: explicitly in inches
+  const inchesMatch = columns.find((c) => {
+    const lower = c.toLowerCase();
+    return (
+      (lower.includes("thick") || lower.includes("slab") || lower.includes("h_") || lower.includes("depth")) &&
+      (lower.includes("(in") || lower.includes("inch") || lower.includes("_in") || lower.endsWith(" in"))
+    );
+  });
+  if (inchesMatch) return inchesMatch;
 
   // Priority keywords for thickness
   const keywords = [
@@ -92,6 +103,36 @@ export function detectThicknessColumn(columns) {
   }
 
   return columns[0] || "";
+}
+
+/**
+ * Auto-detects the column most likely to contain DMI / Distance values.
+ */
+export function detectDmiColumn(columns) {
+  if (!columns || columns.length === 0) return "";
+
+  const priorityKeywords = [
+    "dmift",
+    "dmi",
+    "distanceft",
+    "distance",
+    "distft",
+    "dist",
+    "stationdmi",
+    "stationdistance",
+    "chainage",
+    "offset",
+  ];
+
+  for (const kw of priorityKeywords) {
+    const found = columns.find((c) => {
+      const clean = cleanHeaderName(c);
+      return clean === kw || clean.startsWith(kw) || clean.includes(kw);
+    });
+    if (found) return found;
+  }
+
+  return "";
 }
 
 /**
@@ -169,6 +210,36 @@ export function cleanThicknessValue(val) {
 }
 
 /**
+ * Helper to extract DMI value from a section data row.
+ */
+export function extractRowDmi(row) {
+  if (!row) return null;
+  const candidates = [
+    "DMI",
+    "dmi",
+    "Dmi",
+    "DMI (ft)",
+    "DMI(ft)",
+    "Distance",
+    "distance",
+    "DISTANCE",
+    "dist",
+    "STATION",
+    "Station",
+    "station",
+  ];
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      const num = typeof row[key] === "number" ? row[key] : parseFloat(row[key]);
+      if (!isNaN(num) && Number.isFinite(num)) {
+        return Math.round(num);
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Extracts unique ordered stations from section rows.
  */
 export function getUniqueSectionStations(rows) {
@@ -179,9 +250,10 @@ export function getUniqueSectionStations(rows) {
     const sId = r.StationID ?? r.stationId ?? r.stationid ?? r.Station ?? (idx + 1);
     const key = String(sId);
     if (!stationsMap.has(key)) {
+      const dmi = extractRowDmi(r);
       stationsMap.set(key, {
         stationId: sId,
-        dmi: r.DMI ?? r.dmi ?? null,
+        dmi,
         firstRowIndex: idx,
       });
     }
@@ -197,14 +269,16 @@ export function getUniqueSectionStations(rows) {
  * @param {Array} fileRows - rows parsed from uploaded file
  * @param {string} thicknessCol - selected thickness column
  * @param {string} stationCol - optional station column in file
- * @param {string} method - 'order' (corresponding sequential order) or 'station' (by station ID)
+ * @param {string} method - 'dmi' (by DMI distance), 'order' (corresponding sequential order), or 'station' (by station ID)
+ * @param {string} dmiCol - optional DMI column in file
  */
 export function matchThicknessToStations(
   uniqueStations,
   fileRows,
   thicknessCol,
   stationCol = "",
-  method = "order"
+  method = "dmi",
+  dmiCol = ""
 ) {
   if (!uniqueStations || uniqueStations.length === 0) return [];
   if (!fileRows || fileRows.length === 0 || !thicknessCol) {
@@ -215,9 +289,94 @@ export function matchThicknessToStations(
       rawFileValue: null,
       thickness: null,
       isMeasured: false,
+      hasFileRow: false,
+      isMissingInFile: false,
     }));
   }
 
+  // 1. Match by DMI (Distance)
+  if (method === "dmi" && dmiCol) {
+    const fileDmiMap = new Map();
+    const fileDmiList = [];
+
+    fileRows.forEach((r, idx) => {
+      const rawDmi = r[dmiCol];
+      if (rawDmi !== null && rawDmi !== undefined && String(rawDmi).trim() !== "") {
+        const cleanedStr = String(rawDmi).replace(/[^0-9.-]/g, "").trim();
+        const parsedDmi = parseFloat(cleanedStr);
+        if (!Number.isNaN(parsedDmi) && Number.isFinite(parsedDmi)) {
+          const thickness = cleanThicknessValue(r[thicknessCol]);
+          const entry = {
+            dmi: parsedDmi,
+            roundedDmi: Math.round(parsedDmi),
+            thickness,
+            rawVal: r[thicknessCol],
+            rawDmi,
+            fileRowNumber: idx + 1,
+          };
+          fileDmiList.push(entry);
+
+          const intKey = Math.round(parsedDmi);
+          if (!fileDmiMap.has(intKey)) {
+            fileDmiMap.set(intKey, entry);
+          }
+          if (!fileDmiMap.has(String(parsedDmi))) {
+            fileDmiMap.set(String(parsedDmi), entry);
+          }
+        }
+      }
+    });
+
+    return uniqueStations.map((stn) => {
+      let targetDmi = null;
+      if (stn.dmi !== null && stn.dmi !== undefined) {
+        const num = typeof stn.dmi === "number" ? stn.dmi : parseFloat(stn.dmi);
+        if (!Number.isNaN(num) && Number.isFinite(num)) {
+          targetDmi = num;
+        }
+      }
+      if (targetDmi === null && stn.stationId !== null && stn.stationId !== undefined) {
+        const num = parseFloat(String(stn.stationId).replace(/[^0-9.-]/g, ""));
+        if (!Number.isNaN(num) && Number.isFinite(num)) {
+          targetDmi = num;
+        }
+      }
+
+      let match = null;
+      if (targetDmi !== null) {
+        const roundedTarget = Math.round(targetDmi);
+        if (fileDmiMap.has(roundedTarget)) {
+          match = fileDmiMap.get(roundedTarget);
+        } else if (fileDmiMap.has(String(targetDmi))) {
+          match = fileDmiMap.get(String(targetDmi));
+        } else {
+          // Tolerance match within ±5 ft
+          const tolerance = 5;
+          let bestDiff = Infinity;
+          for (const item of fileDmiList) {
+            const diff = Math.abs(item.dmi - targetDmi);
+            if (diff <= tolerance && diff < bestDiff) {
+              bestDiff = diff;
+              match = item;
+            }
+          }
+        }
+      }
+
+      return {
+        stationId: stn.stationId,
+        dmi: stn.dmi != null ? stn.dmi : targetDmi,
+        fileRowNumber: match ? match.fileRowNumber : null,
+        rawFileValue: match ? match.rawVal : null,
+        thickness: match ? match.thickness : null,
+        isMeasured: match ? match.thickness !== null : false,
+        hasFileRow: !!match,
+        isMissingInFile: !match,
+      };
+    });
+  }
+
+  // 2. Match by Station ID Column
   if (method === "station" && stationCol) {
     // Build lookup map by station ID string and numeric
     const lookup = new Map();
@@ -251,11 +410,12 @@ export function matchThicknessToStations(
         thickness: match ? match.thickness : null,
         isMeasured: match ? match.thickness !== null : false,
         hasFileRow: !!match,
+        isMissingInFile: !match,
       };
     });
   }
 
-  // Default: Corresponding sequential station order (Row-by-Row)
+  // 3. Default: Corresponding sequential station order (Row-by-Row)
   return uniqueStations.map((stn, idx) => {
     const fileRow = fileRows[idx] ?? null;
     const rawVal = fileRow ? fileRow[thicknessCol] : null;
@@ -269,6 +429,7 @@ export function matchThicknessToStations(
       thickness,
       isMeasured: thickness !== null,
       hasFileRow: !!fileRow,
+      isMissingInFile: !fileRow,
     };
   });
 }
@@ -297,8 +458,42 @@ export function diagnoseRowMismatch({
   matchingMethod,
   matchedList = [],
   stationCol = "",
+  dmiCol = "",
 }) {
   const diff = fileRowCount - totalStations;
+
+  if (matchingMethod === "dmi") {
+    const missingStations = matchedList.filter((m) => m.isMissingInFile || !m.hasFileRow);
+    const matchedCount = matchedList.length - missingStations.length;
+    const mappedRowSet = new Set(matchedList.map((m) => m.fileRowNumber).filter(Boolean));
+    const unmappedFileRowsCount = Math.max(0, fileRowCount - mappedRowSet.size);
+
+    if (missingStations.length > 0 || unmappedFileRowsCount > 0) {
+      return {
+        hasMismatch: true,
+        type: "dmi_mismatch",
+        difference: missingStations.length > 0 ? -missingStations.length : unmappedFileRowsCount,
+        missingCount: missingStations.length,
+        extraCount: unmappedFileRowsCount,
+        severity: "warning",
+        title: `DMI Matching: ${missingStations.length} Missing Station${missingStations.length === 1 ? "" : "s"}`,
+        message: `${missingStations.length > 0 ? `${missingStations.length} of ${totalStations} section stations have no matching DMI in the file and are highlighted in red below (they will remain empty). ` : ""}${unmappedFileRowsCount > 0 ? `${unmappedFileRowsCount} file row${unmappedFileRowsCount === 1 ? "" : "s"} did not match any section station DMI.` : ""}`,
+        details: `Successfully matched ${matchedCount} of ${totalStations} stations by DMI (using column "${dmiCol || "DMI"}"). Missing stations are highlighted in RED in the table below.`,
+      };
+    }
+
+    return {
+      hasMismatch: false,
+      type: "exact",
+      difference: 0,
+      missingCount: 0,
+      extraCount: 0,
+      severity: "success",
+      title: "All Stations Matched by DMI",
+      message: `All ${totalStations} stations successfully matched by DMI with no missing stations!`,
+      details: null,
+    };
+  }
 
   if (matchingMethod === "order") {
     if (diff === 0) {
