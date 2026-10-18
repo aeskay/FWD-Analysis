@@ -1,9 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { useToast } from "../context/ToastContext";
-import RepresentativeSlideGuide from "./RepresentativeSlideGuide";
 
 const DEFLECTION_RE = /^D(\d+)$/;
-
 // SVG Chart dimensions and scaling
 const chartWidth = 640;
 const chartHeight = 400;
@@ -20,7 +18,6 @@ export default function BowlView({
 }) {
   const [selectedRowIndex, setSelectedRowIndex] = useState(0);
   const [prevVariant, setPrevVariant] = useState(selectedVariant);
-  const [showSlideGuide, setShowSlideGuide] = useState(false);
   const selectedSvgRef = useRef(null);
   const overlaySvgRef = useRef(null);
   const rmseSvgRef = useRef(null);
@@ -629,22 +626,6 @@ export default function BowlView({
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
               <button
-                className="btn btn-primary btn-sm"
-                onClick={() => setShowSlideGuide(true)}
-                title="Open step-by-step presentation slides explaining representative bowl selection, equations, and charts"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  background: "#2563eb",
-                  color: "#ffffff",
-                  fontWeight: 600,
-                  boxShadow: "0 1px 3px rgba(37, 99, 235, 0.25)",
-                }}
-              >
-                <span>📊</span> Slides Guide
-              </button>
-              <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleCopyChart(selectedSvgRef.current, "Station Bowl")}
                 title="Copy chart image to clipboard"
@@ -915,22 +896,6 @@ export default function BowlView({
                 )}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setShowSlideGuide(true)}
-                  title="View step-by-step slides and mathematical equations for representative selection"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    borderColor: "#93c5fd",
-                    color: "#1d4ed8",
-                    background: "#eff6ff",
-                    fontWeight: 600,
-                  }}
-                >
-                  <span>📖</span> Methodology Slides
-                </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => handleCopyChart(rmseSvgRef.current, "RMSE Comparison")}
@@ -1778,18 +1743,6 @@ export default function BowlView({
           );
         })()}
       </div>
-
-      {/* ── Temporary Slide Presentation Guide Modal ── */}
-      {showSlideGuide && (
-        <RepresentativeSlideGuide
-          onClose={() => setShowSlideGuide(false)}
-          sectionStats={sectionStats}
-          rows={rows}
-          columns={columns}
-          selectedVariant={selectedVariant}
-          sectionName={sectionName}
-        />
-      )}
     </div>
   );
 }
