@@ -196,6 +196,20 @@ export default function MapView({
   const [currentImageYear, setCurrentImageYear] = useState("");
   const [currentImageDate, setCurrentImageDate] = useState("");
   const [isLoadingDates, setIsLoadingDates] = useState(false);
+  const [googleAuthError, setGoogleAuthError] = useState(false);
+  const [useEmbedFallback, setUseEmbedFallback] = useState(false);
+
+  // ── Global Google Maps Auth Failure Handler ──────────────────────────────────
+  useEffect(() => {
+    window.gm_authFailure = () => {
+      console.warn("Google Maps JavaScript API authentication failed. Auto-switching to Free Embed View.");
+      setGoogleAuthError(true);
+      setUseEmbedFallback(true);
+    };
+    return () => {
+      window.gm_authFailure = null;
+    };
+  }, []);
 
   // ── Load Google Maps JS SDK for Panorama & StreetViewService ──────────────
   useEffect(() => {
@@ -208,6 +222,7 @@ export default function MapView({
       })
       .catch((err) => {
         console.warn("Google Maps JS API load notice (will use embed fallback):", err);
+        setUseEmbedFallback(true);
       });
   }, []);
 
@@ -2519,6 +2534,31 @@ export default function MapView({
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={() => {
+                      setUseEmbedFallback((prev) => !prev);
+                    }}
+                    style={{
+                      padding: "2px 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: useEmbedFallback ? "#059669" : "#334155",
+                      color: "#ffffff",
+                      borderColor: useEmbedFallback ? "#047857" : "#475569",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                    title={
+                      useEmbedFallback
+                        ? "Currently showing Free Embed View (no API key required). Click to switch to 3D View."
+                        : "Currently showing Interactive 3D Street View. Click to switch to Free Embed View."
+                    }
+                  >
+                    <span>{useEmbedFallback ? "🌐 Free Embed" : "⚡ 3D Street View"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
                       const heading = getStationHeading(validPoints, currentTargetIndex);
                       openGoogleStreetView(streetViewStation.lat, streetViewStation.lng, heading);
                     }}
@@ -2558,25 +2598,61 @@ export default function MapView({
 
               {/* Panorama Container or Embed Fallback */}
               <div style={{ flex: 1, position: "relative", width: "100%", height: "100%", background: "#000" }}>
-                {googleMapsReady ? (
+                {googleMapsReady && !useEmbedFallback && !googleAuthError ? (
                   <div
                     ref={panoContainerRef}
                     style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
                   />
                 ) : (
                   <iframe
-                    key={`${streetViewStation.StationID}-${currentTargetIndex}`}
+                    key={`${streetViewStation.StationID}-${currentTargetIndex}-${useEmbedFallback ? "embed" : "ready"}`}
                     title={`Street View Station ${streetViewStation.StationID}`}
-                    src={getStreetViewEmbedUrl(
-                      streetViewStation.lat,
-                      streetViewStation.lng,
-                      getStationHeading(validPoints, currentTargetIndex)
-                    )}
+                    src={`https://maps.google.com/maps?layer=c&cbll=${streetViewStation.lat},${streetViewStation.lng}&cbp=11,${getStationHeading(validPoints, currentTargetIndex)},0,0,0&output=svembed`}
                     style={{ width: "100%", height: "100%", border: "none" }}
                     loading="eager"
                     allow="accelerometer; gyroscope; magnetometer"
                     allowFullScreen
                   />
+                )}
+
+                {/* Notice banner if Google Maps API key failed authentication */}
+                {googleAuthError && useEmbedFallback && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 10,
+                      left: 12,
+                      right: 12,
+                      zIndex: 20,
+                      background: "rgba(254, 242, 242, 0.96)",
+                      border: "1px solid #fca5a5",
+                      borderRadius: 6,
+                      padding: "8px 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      fontSize: 11,
+                      color: "#991b1b",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                      backdropFilter: "blur(4px)",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>⚠️</span>
+                      <div>
+                        <strong>Google Maps Key Notice:</strong> Cloud project requires Billing or "Maps JavaScript API" enabled. Switched to Free Embed View so Street View works immediately.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-xs btn-secondary"
+                      onClick={() => setGoogleAuthError(false)}
+                      style={{ fontSize: 10, padding: "2px 6px" }}
+                      title="Dismiss notice"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 )}
 
                 {/* Fallback card if Google returns ZERO_RESULTS for this station location */}
