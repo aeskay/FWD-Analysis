@@ -6,7 +6,7 @@ import {
   transformSpreadsheetData,
   STANDARD_FIELDS,
 } from "../utils/excelParser";
-import { createSection, saveSectionData } from "../firebase/firestore";
+import { createSection, saveSectionData, updateSectionThickness } from "../firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
@@ -147,6 +147,16 @@ export default function ImportSectionModal({
         targetSectionId = sectionRef.id;
       }
       await saveSectionData(user.uid, projectId, targetSectionId, parsed.rows, parsed.columns);
+
+      // If Thickness column was mapped and populated, update section average thickness
+      const measuredThick = parsed.rows
+        .map((r) => r.Thickness)
+        .filter((v) => v !== null && v !== undefined && !isNaN(v) && v > 0);
+      if (measuredThick.length > 0) {
+        const avgThickness = Math.round((measuredThick.reduce((a, b) => a + b, 0) / measuredThick.length) * 100) / 100;
+        await updateSectionThickness(user.uid, projectId, targetSectionId, avgThickness);
+      }
+
       show(`Section "${sectionName}" imported — ${parsed.rowCount.toLocaleString()} rows`, "success");
       onImported?.(targetSectionId, sectionName.trim());
       onClose();
@@ -427,7 +437,7 @@ export default function ImportSectionModal({
 
               <div className="import-mapping-grid">
                 {otherFields
-                  .filter((f) => showOptionalFields || ["Force", "DropID", "DMI", "Latitude", "Longitude"].includes(f.key))
+                  .filter((f) => showOptionalFields || ["Force", "DropID", "DMI", "Thickness", "Latitude", "Longitude"].includes(f.key))
                   .map((field) => {
                     const mappedCol = columnMapping[field.key] || "";
                     return (
@@ -440,6 +450,8 @@ export default function ImportSectionModal({
                             <span style={{ color: "#d97706", fontSize: 10 }}>Default: {defaultForce} lbs</span>
                           ) : field.key === "DropID" ? (
                             <span style={{ color: "var(--text-muted)", fontSize: 10 }}>Auto-sequenced</span>
+                          ) : field.key === "Thickness" ? (
+                            <span style={{ color: "var(--text-muted)", fontSize: 10 }}>Optional</span>
                           ) : null}
                         </div>
                         <select

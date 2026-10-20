@@ -205,6 +205,49 @@ export default function SectionView({
     onSectionUpdated?.();
   };
 
+  const handleUpdateCell = async (rowIndex, colKey, newValue) => {
+    if (!tableData?.rows || rowIndex < 0 || rowIndex >= tableData.rows.length) return;
+    const updatedRows = [...tableData.rows];
+    const targetRow = { ...updatedRows[rowIndex] };
+
+    let parsedVal = newValue;
+    if (typeof newValue === "string" && newValue.trim() !== "") {
+      const num = parseFloat(newValue.replace(/,/g, ""));
+      if (!isNaN(num) && Number.isFinite(num)) {
+        parsedVal = num;
+      }
+    } else if (newValue === "" || newValue === null || newValue === undefined) {
+      parsedVal = null;
+    }
+
+    targetRow[colKey] = parsedVal;
+    updatedRows[rowIndex] = targetRow;
+
+    setTableData((prev) => ({
+      ...prev,
+      rows: updatedRows,
+    }));
+
+    let avgThickness = sectionThickness;
+    if (colKey === "Thickness") {
+      const measured = updatedRows
+        .map((r) => r.Thickness)
+        .filter((v) => v !== null && v !== undefined && !isNaN(v) && v > 0);
+      if (measured.length > 0) {
+        avgThickness = Math.round((measured.reduce((a, b) => a + b, 0) / measured.length) * 100) / 100;
+        setSectionThickness(avgThickness);
+        if (section) section.thickness = avgThickness;
+      }
+    }
+
+    if (user?.uid && project?.id && section?.id) {
+      await saveSectionData(user.uid, project.id, section.id, updatedRows, tableData.columns);
+      if (colKey === "Thickness" && avgThickness) {
+        await updateSectionThickness(user.uid, project.id, section.id, avgThickness);
+      }
+    }
+  };
+
   // Assign variant letters (A, B, C, ...) to rows based on drop sequence per StationID
   const { taggedRows, availableVariants } = useMemo(() => {
     if (!tableData?.rows?.length) return { taggedRows: [], availableVariants: [] };
@@ -348,6 +391,8 @@ export default function SectionView({
           allHiddenColumns={hiddenColumns}
           onUpdateHiddenColumns={handleUpdateHiddenColumns}
           onSaveImportedThickness={handleSaveImportedThickness}
+          onUpdateCell={handleUpdateCell}
+          onReimport={() => setShowImport(true)}
           normalizedData={{
             columns: tableData.columns,
             rows: activeNormalizedRows,

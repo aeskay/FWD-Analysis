@@ -32,7 +32,7 @@ export function assignVariants(rows) {
   const stationCounters = new Map();
   let maxCount = 0;
 
-  const taggedRows = rows.map((row) => {
+  const taggedRows = rows.map((row, idx) => {
     const sId = row["StationID"] ?? "unknown";
     const currentCount = stationCounters.get(sId) || 0;
     const letter = getVariantLetter(currentCount);
@@ -45,6 +45,7 @@ export function assignVariants(rows) {
     return {
       ...row,
       _variantLetter: letter,
+      _rowIndex: idx,
     };
   });
 

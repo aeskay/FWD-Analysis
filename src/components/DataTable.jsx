@@ -53,11 +53,29 @@ export default function DataTable({
   allHiddenColumns = { data: [], normalized: [] },
   onUpdateHiddenColumns,
   onSaveImportedThickness,
+  onUpdateCell = null,
+  onReimport = null,
 }) {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [showThicknessModal, setShowThicknessModal] = useState(false);
+  const [editingCell, setEditingCell] = useState(null); // { rowIndex, col, value }
+  const [justSavedCell, setJustSavedCell] = useState(null); // `${rowIndex}-${col}`
+
+  const handleCommitEdit = () => {
+    if (!editingCell || !onUpdateCell) {
+      setEditingCell(null);
+      return;
+    }
+    const { rowIndex, col, value } = editingCell;
+    onUpdateCell(rowIndex, col, value);
+    setJustSavedCell(`${rowIndex}-${col}`);
+    setTimeout(() => {
+      setJustSavedCell(null);
+    }, 1500);
+    setEditingCell(null);
+  };
 
   const visibleColumns = useMemo(() => {
     const hiddenSet = new Set(hiddenColumns);
@@ -162,8 +180,37 @@ export default function DataTable({
             onUpdateHiddenColumns={onUpdateHiddenColumns}
             currentTab="data"
           />
+          {onUpdateCell && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text-secondary)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: "var(--bg-secondary)",
+                padding: "3px 8px",
+                borderRadius: 4,
+                border: "1px solid var(--border-subtle)",
+              }}
+              title="You can double-click on any cell to edit its value directly and save it to the database"
+            >
+              <span>✏️</span> Double-click any cell to edit
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          {onReimport && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={onReimport}
+              title="Re-import and totally replace the current section dataset with a new file"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+            >
+              <span>🔄</span>
+              <span>Re-import</span>
+            </button>
+          )}
           {onSaveImportedThickness && (
             <button
               className="btn btn-secondary btn-sm"
@@ -202,6 +249,7 @@ export default function DataTable({
           <tbody>
             {pageRows.map((row, i) => {
               const isChosen = row._variantLetter === selectedVariant;
+              const originalRowIndex = row._rowIndex ?? ((page - 1) * PAGE_SIZE + i);
               return (
                 <tr
                   key={i}
@@ -229,9 +277,79 @@ export default function DataTable({
                         : col === "DateTime"
                         ? "col-datetime"
                         : "");
+                    const isEditing =
+                      editingCell &&
+                      editingCell.rowIndex === originalRowIndex &&
+                      editingCell.col === col;
+                    const isJustSaved =
+                      justSavedCell === `${originalRowIndex}-${col}`;
+
                     return (
-                      <td key={col} className={cls}>
-                        {formatCell(col, row[col])}
+                      <td
+                        key={col}
+                        className={`${cls} ${isJustSaved ? "cell-just-saved" : ""}`}
+                        onDoubleClick={() => {
+                          if (onUpdateCell) {
+                            setEditingCell({
+                              rowIndex: originalRowIndex,
+                              col,
+                              value:
+                                row[col] !== null && row[col] !== undefined
+                                  ? String(row[col])
+                                  : "",
+                            });
+                          }
+                        }}
+                        style={{
+                          cursor: onUpdateCell ? "pointer" : "default",
+                          backgroundColor: isJustSaved
+                            ? "rgba(34, 197, 94, 0.18)"
+                            : undefined,
+                          transition: "background-color 0.3s ease",
+                          position: "relative",
+                        }}
+                        title={
+                          onUpdateCell
+                            ? "Double-click to edit this value"
+                            : undefined
+                        }
+                      >
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingCell.value}
+                            onChange={(e) =>
+                              setEditingCell((prev) => ({
+                                ...prev,
+                                value: e.target.value,
+                              }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                handleCommitEdit();
+                              } else if (e.key === "Escape") {
+                                setEditingCell(null);
+                              }
+                            }}
+                            onBlur={handleCommitEdit}
+                            style={{
+                              width: "100%",
+                              minWidth: 50,
+                              padding: "2px 4px",
+                              fontSize: 12,
+                              fontFamily: "inherit",
+                              border: "1.5px solid #2563eb",
+                              borderRadius: 3,
+                              background: "#ffffff",
+                              color: "#111827",
+                              outline: "none",
+                              boxShadow: "0 0 0 2px rgba(37, 99, 235, 0.25)",
+                            }}
+                          />
+                        ) : (
+                          formatCell(col, row[col])
+                        )}
                       </td>
                     );
                   })}

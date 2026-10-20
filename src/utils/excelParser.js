@@ -160,6 +160,29 @@ export const STANDARD_FIELDS = [
     description: "Peak plate stress in psi or kPa",
     aliases: ["stress", "contactstress", "pressure", "psi", "kpa"],
   },
+  {
+    key: "Thickness",
+    label: "Pavement Thickness (in)",
+    required: false,
+    category: "structure",
+    description: "Slab or pavement layer thickness in inches",
+    aliases: [
+      "thickness",
+      "thick",
+      "thk",
+      "slabthickness",
+      "pavementthickness",
+      "corethickness",
+      "core",
+      "depth",
+      "hpcc",
+      "h_pcc",
+      "hac",
+      "h_ac",
+      "slab",
+      "h",
+    ],
+  },
 ];
 
 /**
@@ -287,6 +310,7 @@ export function transformSpreadsheetData(rawRows, columnMapping, options = {}) {
           field.key.startsWith("D") ||
           field.key === "Force" ||
           field.key === "Stress" ||
+          field.key === "Thickness" ||
           field.key === "DMI" ||
           field.key === "Latitude" ||
           field.key === "Longitude"
