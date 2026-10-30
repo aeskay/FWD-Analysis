@@ -29,9 +29,24 @@ export default function BowlView({
   const [showCurrent, setShowCurrent] = useState(true);
   const [showAll, setShowAll] = useState(true);
 
+  // Overlay chart interactive hover state
+  const [hoveredStationIdx, setHoveredStationIdx] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState(null);
+  const animFrameRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, []);
+
   if (prevVariant !== selectedVariant) {
     setPrevVariant(selectedVariant);
     setSelectedRowIndex(0);
+    setHoveredStationIdx(null);
+    setTooltipPos(null);
   }
 
   // Extract deflection columns in numeric order: D1, D2, D3, ...
@@ -167,6 +182,15 @@ export default function BowlView({
         ? validRmses.reduce((s, x) => s + x, 0) / validRmses.length
         : 0;
 
+    // Rank stations by RMSE descending (1 = highest RMSE / largest outlier)
+    const rankMap = new Map();
+    [...rowsWithDistance]
+      .filter((item) => isFinite(item.rmse))
+      .sort((a, b) => b.rmse - a.rmse)
+      .forEach((item, rIdx) => {
+        rankMap.set(item.originalIdx, rIdx + 1);
+      });
+
     // 4. Basin Structural Indices (SCI, BDI, BCI, AREA)
     const computeBasinIndices = (getVal) => {
       const d1 = getVal("D1") ?? 0;
@@ -215,6 +239,7 @@ export default function BowlView({
       rmseByIndex,
       meanSectionRmse,
       rowsWithDistance,
+      rankMap,
     };
   }, [rows, deflectionCols]);
 
@@ -250,10 +275,21 @@ export default function BowlView({
         const val = isNaN(num) ? 0 : num;
         const x = getX(i);
         const y = padding.top + (val / overlayMaxDeflection) * plotHeight;
-        return { x, y };
+        return { x, y, sensor: col, val };
       });
       const d = pts.reduce((acc, p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`), "");
-      return { id: r.StationID ?? idx, d };
+      const rmse = sectionStats.rowsWithDistance?.[idx]?.rmse ?? null;
+      const rmseRank = sectionStats.rankMap?.get(idx) ?? null;
+      return {
+        id: r.StationID ?? idx,
+        stationId: r.StationID ?? `${idx + 1}`,
+        originalIdx: idx,
+        row: r,
+        pts,
+        d,
+        rmse,
+        rmseRank,
+      };
     });
 
     // Mean curve points & path
@@ -309,6 +345,9 @@ export default function BowlView({
 
     const clone = svgEl.cloneNode(true);
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+    // Remove any active tooltips or temporary hover highlights from exported SVG
+    clone.querySelectorAll(".overlay-tooltip, .overlay-hover-highlight").forEach((el) => el.remove());
 
     // Get true viewBox dimensions or fallback
     const vb = svgEl.viewBox?.baseVal;
@@ -406,6 +445,151 @@ export default function BowlView({
     }
   };
 
+  const hoveredSp = useMemo(() => {
+    if (hoveredStationIdx === null || !overlayData?.stationPaths) return null;
+    return (
+      overlayData.stationPaths.find(
+        (sp) => sp.originalIdx === hoveredStationIdx
+      ) ?? null
+    );
+  }, [hoveredStationIdx, overlayData]);
+
+  const handleOverlayMouseMove = (e) => {
+    if (!overlaySvgRef.current || !overlayData?.stationPaths?.length) {
+      if (hoveredStationIdx !== null) {
+        setHoveredStationIdx(null);
+        setTooltipPos(null);
+      }
+      return;
+    }
+
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+
+    animFrameRef.current = requestAnimationFrame(() => {
+      const svg = overlaySvgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const svgX = ((clientX - rect.left) / rect.width) * chartWidth;
+      const svgY = ((clientY - rect.top) / rect.height) * chartHeight;
+
+      const count = deflectionCols.length;
+      if (count < 2) return;
+
+      const availableWidth = Math.max(plotWidth - 2 * xGap, 0);
+      const startX = padding.left + xGap;
+      const endX = startX + availableWidth;
+
+      // Check plot bounds
+      if (
+        svgX < startX - 25 ||
+        svgX > endX + 25 ||
+        svgY < padding.top - 15 ||
+        svgY > padding.top + plotHeight + 15
+      ) {
+        setHoveredStationIdx(null);
+        setTooltipPos(null);
+        return;
+      }
+
+      // Check if cursor is over the bottom-right legend box
+      const legendW = 230;
+      const legendH = 16 + 4 * 20;
+      const legX = padding.left + plotWidth - legendW - 14;
+      const legY = padding.top + plotHeight - legendH - 14;
+      if (
+        svgX >= legX - 5 &&
+        svgX <= legX + legendW + 5 &&
+        svgY >= legY - 5 &&
+        svgY <= legY + legendH + 5
+      ) {
+        setHoveredStationIdx(null);
+        setTooltipPos(null);
+        return;
+      }
+
+      // Determine segment
+      const clampedX = Math.max(startX, Math.min(endX, svgX));
+      const segWidth = availableWidth / (count - 1);
+      const segIndex = Math.min(
+        count - 2,
+        Math.max(0, Math.floor((clampedX - startX) / segWidth))
+      );
+      const segStartX = startX + segIndex * segWidth;
+      const t = Math.min(1, Math.max(0, (clampedX - segStartX) / segWidth));
+
+      // Candidate paths based on visible layers
+      const candidatePaths = showAll
+        ? overlayData.stationPaths
+        : overlayData.stationPaths.filter((sp) => {
+            if (showRepresentative && sp.originalIdx === sectionStats?.representative?.originalIdx) return true;
+            if (showCurrent && sp.originalIdx === selectedRowIndex) return true;
+            return false;
+          });
+
+      if (candidatePaths.length === 0) {
+        setHoveredStationIdx(null);
+        setTooltipPos(null);
+        return;
+      }
+
+      let closestStation = null;
+      let minDist = Infinity;
+
+      for (let i = 0; i < candidatePaths.length; i++) {
+        const sp = candidatePaths[i];
+        const y0 = sp.pts[segIndex]?.y;
+        const y1 = sp.pts[segIndex + 1]?.y;
+        if (y0 === undefined || y1 === undefined) continue;
+
+        const curveY = (1 - t) * y0 + t * y1;
+        const dist = Math.abs(svgY - curveY);
+
+        if (dist < minDist) {
+          minDist = dist;
+          closestStation = sp;
+        }
+      }
+
+      // Snap threshold: 24 SVG px
+      if (closestStation && minDist <= 24) {
+        setHoveredStationIdx(closestStation.originalIdx);
+        setTooltipPos({ x: svgX, y: svgY });
+      } else {
+        setHoveredStationIdx(null);
+        setTooltipPos(null);
+      }
+    });
+  };
+
+  const handleOverlayMouseLeave = () => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setHoveredStationIdx(null);
+    setTooltipPos(null);
+  };
+
+  const handleOverlayClick = () => {
+    if (hoveredStationIdx !== null && hoveredStationIdx >= 0 && hoveredStationIdx < rows.length) {
+      setSelectedRowIndex(hoveredStationIdx);
+      const sId = rows[hoveredStationIdx]?.StationID ?? hoveredStationIdx + 1;
+      show?.(`Selected Station ${sId}`, "info");
+
+      const rowEl = document.getElementById(`bowl-station-row-${hoveredStationIdx}`);
+      if (rowEl) {
+        rowEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  };
+
   return (
     <div style={{ flex: 1, display: "flex", height: "100%", overflow: "hidden", background: "#f5f6f8" }}>
       {/* ── Left Half: Station Deflection Table ── */}
@@ -496,14 +680,23 @@ export default function BowlView({
             <tbody>
               {rows.map((row, idx) => {
                 const isSelected = idx === selectedRowIndex;
+                const isHovered = hoveredStationIdx === idx;
                 const isRep = sectionStats?.representative?.originalIdx === idx;
                 return (
                   <tr
                     key={row.StationID ? `${row.StationID}-${idx}` : idx}
+                    id={`bowl-station-row-${idx}`}
                     onClick={() => setSelectedRowIndex(idx)}
+                    onMouseEnter={() => setHoveredStationIdx(idx)}
+                    onMouseLeave={() => setHoveredStationIdx((prev) => (prev === idx ? null : prev))}
                     className={isSelected ? "selected-row" : ""}
                     style={{
                       cursor: "pointer",
+                      background: isSelected
+                        ? "var(--primary-subtle, #eff6ff)"
+                        : isHovered
+                        ? "#fef3c7"
+                        : undefined,
                     }}
                   >
                     <td
@@ -1330,9 +1523,6 @@ export default function BowlView({
                   <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
                     Section Deflection Bowl Overlay
                   </span>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                    Compare Representative, Section Mean, Current Station, and all section stations
-                  </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
                   <button
@@ -1446,9 +1636,18 @@ export default function BowlView({
                   <svg
                     ref={overlaySvgRef}
                     viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                    style={{ width: "100%", height: "auto", overflow: "visible", background: "#ffffff" }}
+                    style={{
+                      width: "100%",
+                      height: "auto",
+                      overflow: "visible",
+                      background: "#ffffff",
+                      cursor: hoveredStationIdx !== null ? "pointer" : "default",
+                    }}
                     shapeRendering="crispEdges"
                     textRendering="geometricPrecision"
+                    onMouseMove={handleOverlayMouseMove}
+                    onMouseLeave={handleOverlayMouseLeave}
+                    onClick={handleOverlayClick}
                   >
                     {/* Major Horizontal Grid Lines & Y-axis Inner Ticks */}
                     {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
@@ -1523,16 +1722,19 @@ export default function BowlView({
 
                     {/* 1. All Stations (Others in Black) */}
                     {showAll &&
-                      overlayData.stationPaths.map((sp) => (
-                        <path
-                          key={sp.id}
-                          d={sp.d}
-                          fill="none"
-                          stroke="#111827"
-                          strokeWidth="1.2"
-                          opacity="0.20"
-                        />
-                      ))}
+                      overlayData.stationPaths.map((sp) => {
+                        const isThisHovered = hoveredStationIdx === sp.originalIdx;
+                        return (
+                          <path
+                            key={sp.id}
+                            d={sp.d}
+                            fill="none"
+                            stroke="#111827"
+                            strokeWidth="1.2"
+                            opacity={isThisHovered ? "0.9" : hoveredStationIdx !== null ? "0.10" : "0.20"}
+                          />
+                        );
+                      })}
 
                     {/* 2. Current Station (Blue) */}
                     {showCurrent && overlayData.currentPath && (
@@ -1644,6 +1846,44 @@ export default function BowlView({
                       </>
                     )}
 
+                    {/* 5. Active Hover Highlight Curve */}
+                    {hoveredSp && (
+                      <g className="overlay-hover-highlight" pointerEvents="none">
+                        {/* Outer Glow Halo */}
+                        <path
+                          d={hoveredSp.d}
+                          fill="none"
+                          stroke="#ea580c"
+                          strokeWidth="7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity="0.30"
+                        />
+                        {/* Sharp Vibrant Highlight Path */}
+                        <path
+                          d={hoveredSp.d}
+                          fill="none"
+                          stroke="#ea580c"
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity="1"
+                        />
+                        {/* Sensor Point Nodes */}
+                        {hoveredSp.pts.map((pt) => (
+                          <circle
+                            key={`hover-overlay-pt-${pt.sensor}`}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="4.5"
+                            fill="#ea580c"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
+                      </g>
+                    )}
+
                     {/* 4-sided Inner Box Border */}
                     <rect
                       x={padding.left}
@@ -1653,6 +1893,7 @@ export default function BowlView({
                       fill="none"
                       stroke="#000000"
                       strokeWidth="1.5"
+                      pointerEvents="none"
                     />
 
                     {/* Bottom-Right Legend Box with Solid Black Border */}
@@ -1709,6 +1950,174 @@ export default function BowlView({
                         })}
                       </g>
                     )}
+
+                    {/* Interactive Hover Tooltip Card */}
+                    {hoveredSp && tooltipPos && (() => {
+                      const isRep = hoveredSp.originalIdx === sectionStats?.representative?.originalIdx;
+                      const isCur = hoveredSp.originalIdx === selectedRowIndex;
+                      const isOutlier =
+                        sectionStats?.meanSectionRmse > 0 &&
+                        hoveredSp.rmse > sectionStats.meanSectionRmse * 1.5;
+
+                      const tooltipWidth = 195;
+                      const hasBadge = isRep || isCur || isOutlier;
+                      const tooltipHeight = hasBadge ? 96 : 80;
+                      const gap = 14;
+
+                      let tooltipX = tooltipPos.x - tooltipWidth / 2;
+                      if (tooltipX < padding.left + 5) tooltipX = padding.left + 5;
+                      if (tooltipX + tooltipWidth > padding.left + plotWidth - 5) {
+                        tooltipX = padding.left + plotWidth - tooltipWidth - 5;
+                      }
+
+                      let tooltipY = tooltipPos.y - tooltipHeight - gap;
+                      if (tooltipY < padding.top + 5) {
+                        tooltipY = tooltipPos.y + gap;
+                      }
+
+                      const d1Val = hoveredSp.row?.D1 ?? hoveredSp.pts?.[0]?.val;
+                      const dmiVal = hoveredSp.row?.DMI ?? hoveredSp.row?.Distance;
+
+                      return (
+                        <g
+                          className="overlay-tooltip"
+                          transform={`translate(${tooltipX}, ${tooltipY})`}
+                          pointerEvents="none"
+                        >
+                          {/* Card Background */}
+                          <rect
+                            x="0"
+                            y="0"
+                            width={tooltipWidth}
+                            height={tooltipHeight}
+                            rx="6"
+                            fill="#0f172a"
+                            stroke={isOutlier ? "#f97316" : isRep ? "#22c55e" : isCur ? "#3b82f6" : "#334155"}
+                            strokeWidth="1.5"
+                            opacity="0.96"
+                          />
+
+                          {/* Station Title */}
+                          <text
+                            x="12"
+                            y="18"
+                            fill="#94a3b8"
+                            fontSize="11"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            Station:{" "}
+                            <tspan fill="#ffffff" fontWeight="bold" fontSize="12">
+                              {hoveredSp.stationId}
+                            </tspan>
+                          </text>
+
+                          {/* Role / Outlier Badge */}
+                          {isRep ? (
+                            <text
+                              x={tooltipWidth - 12}
+                              y="18"
+                              textAnchor="end"
+                              fill="#4ade80"
+                              fontSize="10"
+                              fontWeight="bold"
+                              fontFamily="Arial, sans-serif"
+                            >
+                              ★ Representative
+                            </text>
+                          ) : isCur ? (
+                            <text
+                              x={tooltipWidth - 12}
+                              y="18"
+                              textAnchor="end"
+                              fill="#60a5fa"
+                              fontSize="10"
+                              fontWeight="bold"
+                              fontFamily="Arial, sans-serif"
+                            >
+                              ● Current
+                            </text>
+                          ) : isOutlier ? (
+                            <text
+                              x={tooltipWidth - 12}
+                              y="18"
+                              textAnchor="end"
+                              fill="#fb923c"
+                              fontSize="10"
+                              fontWeight="bold"
+                              fontFamily="Arial, sans-serif"
+                            >
+                              ▲ Outlier Bowl
+                            </text>
+                          ) : null}
+
+                          {/* RMSE Line */}
+                          <text
+                            x="12"
+                            y={hasBadge ? "36" : "34"}
+                            fill="#94a3b8"
+                            fontSize="11"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            RMSE to Mean:{" "}
+                            <tspan
+                              fill={isOutlier ? "#fb923c" : "#38bdf8"}
+                              fontWeight="bold"
+                              fontFamily="JetBrains Mono, monospace"
+                            >
+                              {hoveredSp.rmse != null && isFinite(hoveredSp.rmse)
+                                ? `${hoveredSp.rmse.toFixed(3)} mils`
+                                : "—"}
+                            </tspan>
+                            {hoveredSp.rmseRank && (
+                              <tspan fill="#64748b" fontSize="10">
+                                {" "}
+                                (#{hoveredSp.rmseRank})
+                              </tspan>
+                            )}
+                          </text>
+
+                          {/* D1 & DMI Line */}
+                          <text
+                            x="12"
+                            y={hasBadge ? "54" : "50"}
+                            fill="#94a3b8"
+                            fontSize="11"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            D1:{" "}
+                            <tspan fill="#e2e8f0" fontWeight="bold">
+                              {typeof d1Val === "number" ? `${d1Val.toFixed(2)} mils` : d1Val ?? "—"}
+                            </tspan>
+                            {dmiVal !== undefined && (
+                              <tspan fill="#64748b">
+                                {" "}| DMI: {typeof dmiVal === "number" ? dmiVal.toLocaleString() : dmiVal} ft
+                              </tspan>
+                            )}
+                          </text>
+
+                          {/* Subtle Divider */}
+                          <line
+                            x1="12"
+                            y1={hasBadge ? "66" : "62"}
+                            x2={tooltipWidth - 12}
+                            y2={hasBadge ? "66" : "62"}
+                            stroke="#334155"
+                            strokeWidth="1"
+                          />
+
+                          {/* Tip */}
+                          <text
+                            x="12"
+                            y={hasBadge ? "82" : "74"}
+                            fill="#94a3b8"
+                            fontSize="10"
+                            fontFamily="Arial, sans-serif"
+                          >
+                            Tip: <tspan fill="#cbd5e1">Click bowl to select station</tspan>
+                          </text>
+                        </g>
+                      );
+                    })()}
 
                     {/* Axis Titles */}
                     <text
