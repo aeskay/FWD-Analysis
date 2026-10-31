@@ -197,86 +197,64 @@ export default function MapView({
   const [currentImageDate, setCurrentImageDate] = useState("");
   const [isLoadingDates, setIsLoadingDates] = useState(false);
   const [googleAuthError, setGoogleAuthError] = useState(false);
-  const [useEmbedFallback, setUseEmbedFallback] = useState(() => {
-    try {
-      return localStorage.getItem("fwd_streetview_fallback") === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [useEmbedFallback, setUseEmbedFallback] = useState(false);
 
-  // ── Global Google Maps Auth Failure & Console Error Detection ────────────────
+  // Clear any stale fallback flag so 3D View with road numbers is always restored
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("fwd_streetview_fallback") === "true") {
+        localStorage.removeItem("fwd_streetview_fallback");
+      }
+    } catch {}
+  }, []);
+
+  // ── Global Google Maps Auth Failure Handler ──────────────────────────────────
   useEffect(() => {
     window.gm_authFailure = () => {
-      console.warn("Google Maps JavaScript API authentication failed. Auto-switching to Free Embed View.");
+      console.warn("Google Maps JavaScript API authentication notice.");
       setGoogleAuthError(true);
-      setUseEmbedFallback(true);
-      try {
-        localStorage.setItem("fwd_streetview_fallback", "true");
-      } catch {}
-    };
-
-    // Intercept Google Maps runtime console errors (e.g. BillingNotEnabledMapError, ApiNotActivatedMapError)
-    const origConsoleError = console.error;
-    console.error = (...args) => {
-      origConsoleError.apply(console, args);
-      const text = args
-        .map((a) => (typeof a === "string" ? a : a?.message || JSON.stringify(a) || ""))
-        .join(" ");
-      if (
-        text.includes("Google Maps JavaScript API error") ||
-        text.includes("BillingNotEnabledMapError") ||
-        text.includes("ApiNotActivatedMapError") ||
-        text.includes("RefererNotAllowedMapError") ||
-        text.includes("InvalidKeyMapError")
-      ) {
-        console.warn("Detected Google Maps API restriction in console. Auto-switching to Free Embed View.");
-        setGoogleAuthError(true);
-        setUseEmbedFallback(true);
-        try {
-          localStorage.setItem("fwd_streetview_fallback", "true");
-        } catch {}
-      }
     };
 
     return () => {
       window.gm_authFailure = null;
-      console.error = origConsoleError;
     };
   }, []);
 
-  // ── DOM Mutation Observer to catch Google error dialog inside Street View container ──
+  // ── Auto-dismiss Google Maps warning dialog to keep 3D view and road numbers visible ──
   useEffect(() => {
-    if (!streetViewActive || useEmbedFallback) return;
+    if (!streetViewActive) return;
     const container = panoContainerRef.current;
     if (!container) return;
 
-    const checkDomForError = () => {
-      if (
-        container.querySelector(".gm-err-container") ||
-        container.querySelector(".gm-err-content") ||
-        container.innerText?.includes("This page can't load Google Maps correctly") ||
-        container.innerText?.includes("Do you own this website")
-      ) {
-        console.warn("Google Maps error popup detected in DOM. Auto-switching to Free Embed View.");
-        setGoogleAuthError(true);
-        setUseEmbedFallback(true);
-        try {
-          localStorage.setItem("fwd_streetview_fallback", "true");
-        } catch {}
-      }
+    const dismissGoogleErrorDialog = () => {
+      // 1. Hide Google error modal if present
+      const errContainers = container.querySelectorAll(".gm-err-container, .gm-err-content, .gm-err-autocomplete");
+      errContainers.forEach((el) => {
+        el.style.setProperty("display", "none", "important");
+        el.style.setProperty("visibility", "hidden", "important");
+        el.style.setProperty("pointer-events", "none", "important");
+      });
+
+      // 2. Automatically click the 'OK' button on Google's error modal
+      const buttons = container.querySelectorAll("button");
+      buttons.forEach((btn) => {
+        const txt = (btn.innerText || "").trim().toLowerCase();
+        if (txt === "ok" || txt === "dismiss") {
+          btn.click();
+        }
+      });
     };
 
-    checkDomForError();
-    const observer = new MutationObserver(checkDomForError);
+    dismissGoogleErrorDialog();
+    const observer = new MutationObserver(dismissGoogleErrorDialog);
     observer.observe(container, { childList: true, subtree: true });
-    const timer = setInterval(checkDomForError, 400);
+    const timer = setInterval(dismissGoogleErrorDialog, 300);
 
     return () => {
       observer.disconnect();
       clearInterval(timer);
     };
-  }, [streetViewActive, useEmbedFallback, googleMapsReady]);
+  }, [streetViewActive, googleMapsReady]);
 
   // ── Load Google Maps JS SDK for Panorama & StreetViewService ──────────────
   useEffect(() => {
@@ -1505,6 +1483,12 @@ export default function MapView({
           strokeColor: "#ffffff",
           strokeWeight: isActive ? 3 : 2,
         });
+        marker.setLabel({
+          text: String(pt.StationID ?? pt.stationId),
+          color: "#ffffff",
+          fontSize: "10px",
+          fontWeight: "bold",
+        });
         marker.setZIndex(isActive ? 9999 : (isHovered ? 5000 : 100));
       });
       return;
@@ -2636,7 +2620,7 @@ export default function MapView({
                       }}
                       title="Interactive 3D mode with road markers (requires Google Maps API key with billing enabled)"
                     >
-                      <span>⚡ 3D View</span>
+                      <span>⚡ 3D View (Road Numbers)</span>
                     </button>
                     <button
                       type="button"
@@ -2708,7 +2692,7 @@ export default function MapView({
 
               {/* Panorama Container or Embed Fallback */}
               <div style={{ flex: 1, position: "relative", width: "100%", height: "100%", background: "#000" }}>
-                {googleMapsReady && !useEmbedFallback && !googleAuthError ? (
+                {googleMapsReady && !useEmbedFallback ? (
                   <div
                     ref={panoContainerRef}
                     style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
