@@ -1027,8 +1027,22 @@ export default function MapView({
       });
     });
 
-    // Single-click on map: jump Street View to exact clicked road location
+    // Single-click on map: ONLY navigate Street View if Street View is ALREADY active!
     mapInstance.on("click", (e) => {
+      // Do not open Street View unless already active or pegman mode is active
+      if (!streetViewActiveRef.current && !isPegmanModeRef.current) {
+        return;
+      }
+
+      // Ignore multi-clicks (e.g. double click to zoom)
+      if (e.originalEvent && e.originalEvent.detail > 1) {
+        return;
+      }
+
+      if (isPegmanModeRef.current) {
+        setIsPegmanMode(false);
+      }
+
       const lat = e.lngLat.lat;
       const lng = e.lngLat.lng;
 
