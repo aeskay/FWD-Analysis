@@ -196,66 +196,6 @@ export default function MapView({
   const [currentImageYear, setCurrentImageYear] = useState("");
   const [currentImageDate, setCurrentImageDate] = useState("");
   const [isLoadingDates, setIsLoadingDates] = useState(false);
-  const [googleAuthError, setGoogleAuthError] = useState(false);
-  const [useEmbedFallback, setUseEmbedFallback] = useState(false);
-
-  // Clear any stale fallback flag so 3D View with road numbers is always restored
-  useEffect(() => {
-    try {
-      if (localStorage.getItem("fwd_streetview_fallback") === "true") {
-        localStorage.removeItem("fwd_streetview_fallback");
-      }
-    } catch {}
-  }, []);
-
-  // ── Global Google Maps Auth Failure Handler ──────────────────────────────────
-  useEffect(() => {
-    window.gm_authFailure = () => {
-      console.warn("Google Maps JavaScript API authentication notice.");
-      setGoogleAuthError(true);
-    };
-
-    return () => {
-      window.gm_authFailure = null;
-    };
-  }, []);
-
-  // ── Auto-dismiss Google Maps warning dialog to keep 3D view and road numbers visible ──
-  useEffect(() => {
-    if (!streetViewActive) return;
-    const container = panoContainerRef.current;
-    if (!container) return;
-
-    const dismissGoogleErrorDialog = () => {
-      // 1. Hide Google error modal if present
-      const errContainers = container.querySelectorAll(".gm-err-container, .gm-err-content, .gm-err-autocomplete");
-      errContainers.forEach((el) => {
-        el.style.setProperty("display", "none", "important");
-        el.style.setProperty("visibility", "hidden", "important");
-        el.style.setProperty("pointer-events", "none", "important");
-      });
-
-      // 2. Automatically click the 'OK' button on Google's error modal
-      const buttons = container.querySelectorAll("button");
-      buttons.forEach((btn) => {
-        const txt = (btn.innerText || "").trim().toLowerCase();
-        if (txt === "ok" || txt === "dismiss") {
-          btn.click();
-        }
-      });
-    };
-
-    dismissGoogleErrorDialog();
-    const observer = new MutationObserver(dismissGoogleErrorDialog);
-    observer.observe(container, { childList: true, subtree: true });
-    const timer = setInterval(dismissGoogleErrorDialog, 300);
-
-    return () => {
-      observer.disconnect();
-      clearInterval(timer);
-    };
-  }, [streetViewActive, googleMapsReady]);
-
   // ── Load Google Maps JS SDK for Panorama & StreetViewService ──────────────
   useEffect(() => {
     loadGoogleMapsApi()
@@ -265,12 +205,8 @@ export default function MapView({
           streetViewServiceRef.current = new gMaps.StreetViewService();
         }
       })
-      .catch((err) => {
-        console.warn("Google Maps JS API load notice (will use embed fallback):", err);
-        setUseEmbedFallback(true);
-        try {
-          localStorage.setItem("fwd_streetview_fallback", "true");
-        } catch {}
+            .catch((err) => {
+        console.warn("Google Maps JS API load notice:", err);
       });
   }, []);
 
@@ -2598,71 +2534,6 @@ export default function MapView({
                     />
                     <span>Points on Road</span>
                   </label>
-                  {/* Street View Mode Switcher */}
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      background: "#1e293b",
-                      borderRadius: 6,
-                      padding: 2,
-                      border: "1px solid #334155",
-                    }}
-                    title="Switch between 3D Street View and Free Embed View (guaranteed to work without Google billing)"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseEmbedFallback(false);
-                        try {
-                          localStorage.setItem("fwd_streetview_fallback", "false");
-                        } catch {}
-                      }}
-                      style={{
-                        background: !useEmbedFallback ? "#2563eb" : "transparent",
-                        color: !useEmbedFallback ? "#ffffff" : "#94a3b8",
-                        border: "none",
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontWeight: !useEmbedFallback ? 700 : 500,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4,
-                        transition: "all 0.15s ease",
-                      }}
-                      title="Interactive 3D mode with road markers (requires Google Maps API key with billing enabled)"
-                    >
-                      <span>⚡ 3D View (Road Numbers)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseEmbedFallback(true);
-                        try {
-                          localStorage.setItem("fwd_streetview_fallback", "true");
-                        } catch {}
-                      }}
-                      style={{
-                        background: useEmbedFallback ? "#059669" : "transparent",
-                        color: useEmbedFallback ? "#ffffff" : "#94a3b8",
-                        border: "none",
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        fontSize: 11,
-                        fontWeight: useEmbedFallback ? 700 : 500,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4,
-                        transition: "all 0.15s ease",
-                      }}
-                      title="Free Google Street View (always works, 360° navigation, no billing or key setup required)"
-                    >
-                      <span>🌐 Free Embed</span>
-                    </button>
-                  </div>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
@@ -2704,64 +2575,12 @@ export default function MapView({
                 </div>
               </div>
 
-              {/* Panorama Container or Embed Fallback */}
+              {/* Panorama Container */}
               <div style={{ flex: 1, position: "relative", width: "100%", height: "100%", background: "#000" }}>
-                {googleMapsReady && !useEmbedFallback ? (
-                  <div
-                    ref={panoContainerRef}
-                    style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
-                  />
-                ) : (
-                  <iframe
-                    key={`${streetViewStation.StationID}-${currentTargetIndex}-${currentPanoId || ""}-${useEmbedFallback ? "embed" : "ready"}`}
-                    title={`Street View Station ${streetViewStation.StationID}`}
-                    src={`https://maps.google.com/maps?layer=c${currentPanoId ? `&panoid=${currentPanoId}` : ""}&cbll=${streetViewStation.lat},${streetViewStation.lng}&cbp=11,${getStationHeading(validPoints, currentTargetIndex)},0,0,0&output=svembed`}
-                    style={{ width: "100%", height: "100%", border: "none" }}
-                    loading="eager"
-                    allow="accelerometer; gyroscope; magnetometer"
-                    allowFullScreen
-                  />
-                )}
-
-                {/* Notice banner if Google Maps API key failed authentication */}
-                {googleAuthError && useEmbedFallback && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 10,
-                      left: 12,
-                      right: 12,
-                      zIndex: 20,
-                      background: "rgba(15, 23, 42, 0.92)",
-                      border: "1px solid #059669",
-                      borderRadius: 6,
-                      padding: "8px 12px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      fontSize: 11,
-                      color: "#f1f5f9",
-                      boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
-                      backdropFilter: "blur(8px)",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 14 }}>🌐</span>
-                      <div>
-                        <strong style={{ color: "#34d399" }}>Auto-switched to Free Embed View:</strong> Google 3D Canvas requires active Google Cloud billing. Full 360° Street View is running here with zero API key or billing required.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-xs btn-ghost"
-                      onClick={() => setGoogleAuthError(false)}
-                      style={{ fontSize: 11, padding: "2px 6px", color: "#94a3b8" }}
-                      title="Dismiss notice"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
+                <div
+                  ref={panoContainerRef}
+                  style={{ width: "100%", height: "100%", position: "absolute", inset: 0 }}
+                />
 
                 {/* Fallback card if Google returns ZERO_RESULTS for this station location */}
                 {googleMapsReady && panoStatus === "ZERO_RESULTS" && (
