@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useToast } from "../context/ToastContext";
 
 const DEFLECTION_RE = /^D(\d+)$/;
