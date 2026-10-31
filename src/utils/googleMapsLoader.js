@@ -48,7 +48,7 @@ export function loadGoogleMapsApi(apiKey = null) {
     const script = document.createElement('script');
     script.id = 'google-maps-sdk-script';
     const keyParam = keyToUse ? `&key=${encodeURIComponent(keyToUse)}` : '';
-    script.src = `https://maps.googleapis.com/maps/api/js?libraries=geometry,places${keyParam}`;
+    script.src = `https://maps.googleapis.com/maps/api/js?v=weekly&loading=async${keyParam}`;
     script.async = true;
     script.defer = true;
 
@@ -56,13 +56,13 @@ export function loadGoogleMapsApi(apiKey = null) {
       if (window.google?.maps) {
         resolve(window.google.maps);
       } else {
-        reject(new Error('Google Maps script loaded, but window.google.maps was not found.'));
+        reject(new Error('Google Maps SDK loaded, but window.google.maps is undefined.'));
       }
     };
 
-    script.onerror = () => {
+    script.onerror = (err) => {
       loadPromise = null;
-      reject(new Error('Failed to load Google Maps script. Check your API key and network connection.'));
+      reject(new Error(`Failed to load Google Maps SDK: ${err?.message || 'Network error'}`));
     };
 
     document.head.appendChild(script);
@@ -71,13 +71,13 @@ export function loadGoogleMapsApi(apiKey = null) {
   return loadPromise;
 }
 
-/**
- * Fallback Consumer Embed URL
- */
+export function clearGoogleMapsScript() {
+  const script = document.getElementById('google-maps-sdk-script');
+  if (script) script.remove();
+  loadPromise = null;
+  currentLoadedKey = null;
+}
+
 export function getStreetViewEmbedUrl(lat, lng, heading = 0) {
-  const apiKey = getStoredGoogleMapsApiKey();
-  if (apiKey) {
-    return `https://www.google.com/maps/embed/v1/streetview?key=${apiKey}&location=${lat},${lng}&heading=${heading}&pitch=0`;
-  }
   return `https://maps.google.com/maps?layer=c&cbll=${lat},${lng}&cbp=11,${heading},0,0,0&output=svembed`;
 }
