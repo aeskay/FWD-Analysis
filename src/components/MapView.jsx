@@ -1018,12 +1018,12 @@ export default function MapView({
     mapInstance.scrollZoom.setWheelZoomRate(1 / 1800);
     mapInstance.scrollZoom.setZoomRate(1 / 800);
 
-    // Gradual double-click zoom (+0.5)
+    // Drastic double-click zoom (+2.0) into clicked map point
     mapInstance.on("dblclick", (e) => {
       mapInstance.easeTo({
         center: [e.lngLat.lng, e.lngLat.lat],
-        zoom: Math.min(22, mapInstance.getZoom() + 0.5),
-        duration: 250,
+        zoom: Math.min(22, mapInstance.getZoom() + 2),
+        duration: 350,
       });
     });
 
@@ -1206,13 +1206,13 @@ export default function MapView({
         }
       });
 
-      // Double-click marker: gradual zoom (+0.5) centered on station
+      // Double-click marker: drastic zoom (+2.0) centered on station
       el.addEventListener("dblclick", (e) => {
         e.stopPropagation();
         mapInstance.easeTo({
           center: [pt.lng, pt.lat],
-          zoom: Math.min(22, mapInstance.getZoom() + 0.5),
-          duration: 250,
+          zoom: Math.min(22, mapInstance.getZoom() + 2),
+          duration: 350,
         });
         setActiveStationId(pt.StationID ?? pt.stationId);
       });
